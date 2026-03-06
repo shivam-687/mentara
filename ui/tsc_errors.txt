@@ -1,0 +1,5 @@
+src/components/assistant-ui/attachment.tsx(3,10): error TS1484: 'PropsWithChildren' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/components/assistant-ui/tooltip-icon-button.tsx(3,10): error TS1484: 'ComponentPropsWithRef' is a type and must be imported using a type-only import when 'verbatimModuleSyntax' is enabled.
+src/components/layout/app-shell.tsx(2,48): error TS6133: 'BarChart3' is declared but its value is never read.
+src/pages/progress.tsx(4,16): error TS6133: 'CardHeader' is declared but its value is never read.
+src/pages/progress.tsx(4,28): error TS6133: 'CardTitle' is declared but its value is never read.

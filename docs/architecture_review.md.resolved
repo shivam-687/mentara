@@ -1,0 +1,246 @@
+# Mentara Engine — Architecture Deep Dive
+
+## 1. End-to-End Flow: What Happens When a User Sends a Message
+
+```mermaid
+sequenceDiagram
+    participant U as User (Browser)
+    participant API as Express API
+    participant Engine as TutorEngine
+    participant CB as ContextBuilder
+    participant LLM as LLM Provider
+    participant TR as ToolRegistry
+    participant SM as SessionManager
+    participant DB as PostgreSQL
+
+    U->>API: POST /api/class/:id/chat (SSE)
+    API->>Engine: chatStream(classId, message)
+    Engine->>CB: buildMessages(classId, message)
+    
+    Note over CB: 1. Get class state from DB
+    CB->>SM: getClass(classId)
+    SM->>DB: SELECT from classes
+    DB-->>SM: class row
+    SM-->>CB: ClassData (status, roadmap, module)
+    
+    Note over CB: 2. Build system prompt (phase-aware)
+    CB->>CB: buildTutorSystemPrompt(classId, status)
+    
+    Note over CB: 3. Inject context addendum
+    CB->>SM: getProgress(classId)
+    SM->>DB: SELECT from progress
+    DB-->>SM: progress row
+    SM-->>CB: ProgressData
+    CB->>CB: Append class state + progress to system prompt
+    
+    Note over CB: 4. Load & sanitize history
+    CB->>SM: getHistory(classId)
+    SM->>DB: SELECT from messages ORDER BY created_at
+    DB-->>SM: message rows
+    SM-->>CB: Message[]
+    CB->>CB: sanitizeHistory() + compactContent()
+    CB-->>Engine: Message[] (system + history + user)
+    
+    loop Agentic Loop (max 10 iterations)
+        Engine->>LLM: chatStream(messages, tools)
+        LLM-->>Engine: stream (text deltas + tool calls)
+        Engine-->>U: SSE text_delta events
+        
+        alt No tool calls
+            Engine->>SM: addMessage(assistant, content)
+            Engine->>SM: getClass + getProgress
+            Engine-->>U: SSE status + done
+            Engine->>CB: summarizeIfNeeded() (background)
+        else Has tool calls
+            Engine->>SM: addMessage(assistant, content, tool_calls)
+            loop Each tool call
+                Engine->>TR: execute(toolName, args)
+                TR-->>Engine: ToolResult
+                Engine->>SM: addMessage(tool, result)
+                alt UI Artifact tool
+                    Engine-->>U: SSE tool_call event
+                end
+            end
+            alt All UI artifacts
+                Engine-->>U: SSE status + done (cascade prevention)
+            else Has state tools
+                Note over Engine: Continue loop → LLM sees tool results
+            end
+        end
+    end
+```
+
+---
+
+## 2. Phase State Machine
+
+The class progresses through 5 phases. Each phase gives the LLM **different instructions**:
+
+```mermaid
+stateDiagram-v2
+    [*] --> clarifying: User creates class
+    clarifying --> negotiating: LLM calls update_class_state(roadmap)
+    negotiating --> locked: LLM calls update_class_state(status=locked)
+    locked --> in_progress: First teaching turn
+    in_progress --> completed: All modules done
+    completed --> [*]
+    
+    note right of clarifying: Ask 2-3 questions about depth, experience
+    note right of negotiating: Present roadmap, accept modifications
+    note right of locked: Teaching phase - introduce, explain, check, reinforce
+    note right of completed: Present final mastery report
+```
+
+---
+
+## 3. What Gets Injected Into Every LLM Call
+
+Every time the user sends a message, the system builds this exact message array:
+
+| # | Role | Content | Token Cost |
+|---|------|---------|------------|
+| 1 | `system` | Base prompt (~1200 tokens) + Phase instructions (~300-500 tokens) + Current class context (~200 tokens) + Progress summary (~100 tokens) | **~1800-2000** |
+| 2 | `system` | Previous conversation summary (if history > 30 messages) | ~100-200 |
+| 3-18 | Mixed | Last 16 messages (user, assistant, tool results) | **~2000-4000** |
+| 19 | `user` | Current message | ~10-50 |
+
+> [!WARNING]
+> **Total prompt size: ~4,000-6,000+ tokens PER REQUEST.** The system prompt alone is ~2K tokens. With tool definitions for 11 tools adding another ~2K tokens, every request costs **~6,000-8,000 prompt tokens**. This is expensive for `gemini-3.1-flash-lite`.
+
+---
+
+## 4. Analysis: Are We Over-Constraining the LLM?
+
+### Yes — In Several Critical Ways:
+
+**Problem 1: Rigid Subtopic-by-Subtopic Enforcement**
+The prompt says: *"Follow the roadmap module by module, subtopic by subtopic. Never skip ahead."* This removes the LLM's ability to:
+- Adapt to student energy (skip boring basics if student already knows them)
+- Make spontaneous connections between topics
+- Respond to teachable moments
+
+**Problem 2: Prescriptive Teaching Methodology**
+Every subtopic must follow: Introduce → Explain → Check → Reinforce. This formulaic pattern:
+- Makes every interaction feel robotic and predictable
+- Prevents the LLM from using its natural conversational intelligence
+- Forces questioning even when the student clearly understands
+
+**Problem 3: Tool Call Mandates**
+- *"ALWAYS call record_question_answer after evaluating ANY student answer"*
+- *"After explaining 2-3 subtopics, use show_test"*
+- *"At the end of each module, use show_test for a comprehensive assessment"*
+
+This turns the LLM into a script executor rather than an adaptive tutor. The LLM spends tokens deciding **which mandatory tool to call** instead of **what's best for the student**.
+
+**Problem 4: Context Overload**
+We inject the full class state, progress summary, module details, and phase instructions on every turn. The LLM has `get_class_state` and `get_progress` tools to fetch this on demand, but we also pre-inject it — **wasteful duplication**.
+
+### What We Do Right:
+
+- **Phase-aware prompts** — Only showing relevant instructions prevents cross-phase confusion
+- **Cascade prevention** — Stopping the loop after UI-only tool calls prevents wasted iterations
+- **History sanitization** — Orphaned tool messages are correctly filtered
+- **Background summarization** — Intelligent context compression
+
+---
+
+## 5. What We Borrowed From Claw Projects
+
+| Pattern | picoclaw (Go) | tinyclaw (TS) | Mentara |
+|---------|---------------|---------------|---------|
+| **Tool Loop** | [RunToolLoop()](file:///D:/projects/picoclaw/pkg/tools/toolloop.go#34-158) — max iterations, tool registry, normalized tool calls | N/A (spawns CLI processes) | Direct copy of picoclaw's loop structure |
+| **Session Manager** | JSON file storage, [GetOrCreate](file:///D:/projects/picoclaw/pkg/session/manager.go#42-61), [TruncateHistory](file:///D:/projects/picoclaw/pkg/session/manager.go#125-147), [SetSummary](file:///D:/projects/picoclaw/pkg/session/manager.go#114-124) | N/A (stateless CLI) | DB-backed version with same API shape |
+| **History Sanitization** | [sanitizeHistory()](file:///c:/Users/Shivam%20singh/mentara/src/engine/context-builder.ts#107-143) from context builder comment: "picoclaw-inspired" | N/A | Directly adapted |
+| **Tool Registry** | [ToolRegistry](file:///c:/Users/Shivam%20singh/mentara/src/tools/registry.ts#7-45) with [Register](file:///D:/projects/picoclaw/pkg/agent/loop.go#195-202), [Execute](file:///D:/projects/picoclaw/pkg/tools/base.go#10-11), `ToProviderDefs` | N/A | Same pattern, TS version |
+| **Context Windowing** | Last N messages + optional summary | CLI `-c` flag for conversation continuation | Last 16 messages + LLM-generated summary |
+| **Streaming** | Not supported | Not supported | **New** — full SSE streaming with delta forwarding |
+| **UI Artifacts** | Not applicable (CLI/chat agents) | Not applicable | **New** — show_code, show_options, show_interactive, etc. |
+| **Phase System** | Not applicable | Not applicable | **New** — state machine with phase-specific prompts |
+| **Cascade Prevention** | Not present | Not present | **New** — UI artifact detection to prevent loop waste |
+
+---
+
+## 6. Do We Need a More Advanced Model?
+
+### Current: `google/gemini-3.1-flash-lite-preview`
+
+| Factor | Assessment |
+|--------|-----------|
+| **Tool calling reliability** | ⚠️ Flash-lite sometimes sends malformed JSON for `data` field (the "Unable to render" bug) |
+| **Following complex system prompts** | ⚠️ Struggles with 2K+ token system prompts — may mix up phases or ignore instructions |
+| **Teaching quality** | ❌ Explanations feel shallow; can't generate rich analogies or nuanced examples |
+| **Context adherence** | ⚠️ With 6-8K prompt tokens, flash-lite often loses track of conversation context |
+| **Creativity** | ❌ Highly formulaic responses; unable to craft truly engaging learning experiences |
+
+### Recommendation:
+
+| Model | Cost | Quality | Recommended For |
+|-------|------|---------|----------------|
+| `gemini-3.1-flash-lite` | $0.01/1M | ⭐⭐ | Summarization, simple Q&A only |
+| `gemini-2.0-flash` | $0.10/1M | ⭐⭐⭐⭐ | **Best balance for Mentara** — good tool use, reasonable cost |
+| `gemini-2.5-pro` | $1.25/1M | ⭐⭐⭐⭐⭐ | Premium tier only — excellent teaching depth |
+| `claude-3.5-sonnet` | $3.00/1M | ⭐⭐⭐⭐⭐ | Best teaching quality, highest cost |
+
+> [!IMPORTANT]
+> **Flash-lite is fundamentally insufficient for an agentic teaching system.** It lacks the reasoning depth to manage phase transitions, generate rich visual artifacts, and maintain conversation coherence. At minimum, use `gemini-2.0-flash`.
+
+---
+
+## 7. Recommendations
+
+### R1: Give the LLM Strategic Freedom
+Replace the rigid Introduce→Explain→Check→Reinforce cycle with **outcome-based goals**:
+
+```
+Instead of:
+  "For each subtopic: Introduce, Explain, Check, Reinforce"
+
+Use:
+  "Your goal for each subtopic is that the student achieves understanding.
+   You decide the best approach — direct explanation, Socratic questioning,
+   worked examples, or active practice. Adapt based on their responses."
+```
+
+### R2: Reduce Context Pre-Injection, Use On-Demand Tools
+Stop injecting the full class context + progress into every system prompt. Instead:
+- Inject only **phase** and **current subtopic name**
+- Let the LLM call `get_class_state` / `get_progress` when it needs detailed state
+- **Saves ~300-400 prompt tokens per request**
+
+### R3: Replace Mandatory Tool Calls with Heuristic Nudges
+Instead of *"ALWAYS call record_question_answer"*, use:
+```
+"If you asked a question and received an answer, consider recording it
+ with record_question_answer for the student's revision tracking."
+```
+
+### R4: Add Reflection Prompts
+After each module, instead of mandatory tests, let the LLM choose:
+- A quiz for factual topics
+- A mini-project for practical topics
+- An open discussion for conceptual topics
+
+### R5: Upgrade the Model
+Switch from `gemini-3.1-flash-lite` to `gemini-2.0-flash` at minimum. The cost difference is negligible (~$0.10/1M vs $0.01/1M) but the quality improvement is dramatic.
+
+### R6: Implement Adaptive Pacing
+Add a simple heuristic: if the student answers 3 questions correctly in a row at the current difficulty, the LLM should increase difficulty or skip ahead. The system currently has no pacing intelligence.
+
+### R7: Add RAG for Learning Content
+Currently the LLM generates all educational content from its training data. For accuracy-critical topics, add a vector store of curated educational content that the LLM can retrieve from. This is especially important for technical topics where the LLM might hallucinate API details.
+
+---
+
+## 8. Comparison: How Others Do It
+
+| Project | Approach |
+|---------|----------|
+| **Khan Academy (Khanmigo)** | Uses GPT-4 with Socratic method focus. Never gives answers directly — always asks guiding questions. Minimal system prompt, heavy reliance on model intelligence. |
+| **Duolingo Max** | Highly structured: lesson scripts + LLM fills in adaptive practice. LLM has very little freedom — it generates within tight templates. |
+| **Synthesis Tutor** | Multi-agent: one agent teaches, another evaluates, a third decides pacing. Each agent has a narrow, focused prompt. |
+| **OpenAI Cookbook: Tutoring** | Recommends: minimal system prompt, strong model, RAG for knowledge base, separate evaluation pipeline. Warns against over-prompting. |
+| **picoclaw** | General agent: no domain-specific instructions. Full tool freedom. Relies on model intelligence + conversation context. |
+| **Mentara (current)** | Maximum instruction density: 2K system prompt, 11 tools, mandatory call patterns, rigid phase system. |
+
+> [!TIP]
+> The trend in 2025 is **less instruction, stronger model, better tools**. Khanmigo's success with GPT-4 shows that a strong model with a simple "be Socratic, never give answers" prompt outperforms a weak model with a 2K-token instruction manual.
