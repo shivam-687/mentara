@@ -144,6 +144,40 @@ Set it in:
 
 You can also set a custom OpenRouter model there. If you leave the model blank, the app uses the seeded default model.
 
+## Docker Compose
+
+A Docker-based local stack is included for running:
+- `db` (PostgreSQL)
+- `api` (Express backend)
+- `web` (built frontend served by Nginx)
+
+### 1. Prepare Compose env
+```bash
+cp .env.compose.example .env.compose
+```
+
+Fill in at least:
+- `CLERK_SECRET_KEY`
+- `CLERK_PUBLISHABLE_KEY`
+- `VITE_CLERK_PUBLISHABLE_KEY`
+
+`OPENROUTER_API_KEY` can remain blank because Mentara now expects browser-supplied OpenRouter keys for LLM-backed actions.
+
+### 2. Start the stack
+```bash
+docker compose --env-file .env.compose up --build
+```
+
+### 3. Open the app
+- frontend: `http://localhost:5173`
+- backend health: `http://localhost:3000/health`
+- postgres: `localhost:${POSTGRES_PORT}` from your compose env
+
+Notes:
+- the backend container runs `drizzle-kit migrate` before starting the API
+- the frontend container reverse-proxies `/api` to the backend container through Nginx
+- for actual tutoring flows, add your OpenRouter key in the app Settings screen after login
+
 ## Current Product State
 
 This repository is best understood as:
@@ -185,3 +219,5 @@ I built Mentara to explore a practical question:
 **What changes when you stop building “AI chat” and start building a structured, stateful learning system around an LLM?**
 
 That question drove the architecture, UI decisions, and the tradeoffs in this codebase.
+
+
