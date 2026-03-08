@@ -9,10 +9,13 @@ export class OpenRouterProvider implements LLMProvider {
     private baseUrl = 'https://openrouter.ai/api/v1';
 
     constructor(apiKey: string) {
-        if (!apiKey) {
-            throw new Error('OpenRouter API key is required. Set OPENROUTER_API_KEY in your .env file.');
-        }
         this.apiKey = apiKey;
+    }
+
+    private ensureApiKey() {
+        if (!this.apiKey) {
+            throw new Error('OpenRouter API key is required. Add OPENROUTER_API_KEY on the server or supply a BYOK key from the client.');
+        }
     }
 
     private buildRequestBody(
@@ -53,6 +56,7 @@ export class OpenRouterProvider implements LLMProvider {
         model: string,
         options?: Record<string, unknown>
     ): Promise<LLMResponse> {
+        this.ensureApiKey();
         const body = this.buildRequestBody(messages, tools, model, options, false);
 
         const response = await fetch(`${this.baseUrl}/chat/completions`, {
@@ -112,6 +116,7 @@ export class OpenRouterProvider implements LLMProvider {
         model: string,
         options?: Record<string, unknown>
     ): AsyncGenerator<LLMStreamDelta, LLMResponse> {
+        this.ensureApiKey();
         const body = this.buildRequestBody(messages, tools, model, options, true);
 
         const response = await fetch(`${this.baseUrl}/chat/completions`, {

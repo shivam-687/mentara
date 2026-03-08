@@ -1,10 +1,11 @@
-// ── Database-backed Session Manager ──
+// Database-backed Session Manager
 // Replaces JSON file storage with PostgreSQL via Drizzle ORM.
 
-import { eq, desc, and, lte, sql } from 'drizzle-orm';
+import { eq, desc, and, lte } from 'drizzle-orm';
 import type { Database } from '../db/index.js';
-import { classes, messages, progress, questionAnswers, testResults, flashcardDecks } from '../db/schema.js';
-import type { ClassData, SessionData, ProgressData, QuestionAnswerData, TestResultData, RevisionStats, Roadmap } from './types.js';
+import { classes, messages, progress, questionAnswers, testResults, flashcardDecks, classNotes } from '../db/schema.js';
+import type { ClassData, SessionData, ProgressData, QuestionAnswerData, TestResultData, RevisionStats, Roadmap, ClassNotesData } from './types.js';
+import { toVisibleHistoryMessage } from './message-visibility.js';
 
 export class SessionManager {
     private db: Database;
@@ -12,8 +13,6 @@ export class SessionManager {
     constructor(db: Database) {
         this.db = db;
     }
-
-    // ── User Operations ──
 
     async ensureUser(clerkId: string, email?: string, name?: string): Promise<string> {
         const { users } = await import('../db/schema.js');
@@ -29,8 +28,6 @@ export class SessionManager {
         return newUser.id;
     }
 
-    // ── Class Operations ──
-
     async createClass(userId: string, title: string, description: string): Promise<ClassData> {
         const [cls] = await this.db.insert(classes).values({
             userId,
@@ -39,8 +36,11 @@ export class SessionManager {
             status: 'clarifying',
         }).returning();
 
-        // Initialize progress
         await this.db.insert(progress).values({
+            classId: cls.id,
+        });
+
+        await this.db.insert(classNotes).values({
             classId: cls.id,
         });
 
@@ -51,6 +51,28 @@ export class SessionManager {
         const rows = await this.db.select().from(classes).where(eq(classes.id, classId)).limit(1);
         if (rows.length === 0) return null;
         return this.toClassData(rows[0]);
+    }
+
+    async getClassForUser(classId: string, userId: string): Promise<ClassData | null> {
+        const rows = await this.db.select().from(classes)
+            .where(and(eq(classes.id, classId), eq(classes.userId, userId)))
+            .limit(1);
+        if (rows.length === 0) return null;
+        return this.toClassData(rows[0]);
+    }
+
+    async classExists(classId: string): Promise<boolean> {
+        const rows = await this.db.select({ id: classes.id }).from(classes).where(eq(classes.id, classId)).limit(1);
+        return rows.length > 0;
+    }
+
+    async userCanAccessQuestion(questionId: string, userId: string): Promise<boolean> {
+        const rows = await this.db.select({ userId: classes.userId })
+            .from(questionAnswers)
+            .innerJoin(classes, eq(questionAnswers.classId, classes.id))
+            .where(eq(questionAnswers.id, questionId))
+            .limit(1);
+        return rows.length > 0 && rows[0].userId === userId;
     }
 
     async saveClass(classData: ClassData): Promise<void> {
@@ -96,7 +118,6 @@ export class SessionManager {
         if (!classData) throw new Error(`Class ${classId} not found`);
         if (!classData.roadmap) throw new Error(`Class ${classId} has no roadmap to lock`);
 
-        // Set first module as current
         if (classData.roadmap.modules.length > 0) {
             classData.roadmap.modules[0].status = 'in_progress';
             await this.db.update(classes).set({
@@ -108,14 +129,11 @@ export class SessionManager {
             }).where(eq(classes.id, classId));
         }
 
-        // Update progress total
         await this.db.update(progress).set({
             modulesTotal: classData.roadmap.modules.length,
             lastActivity: new Date(),
         }).where(eq(progress.classId, classId));
     }
-
-    // ── Message Operations ──
 
     async addMessage(classId: string, role: string, content: string, toolCalls?: unknown[], toolCallId?: string): Promise<void> {
         await this.db.insert(messages).values({
@@ -139,6 +157,13 @@ export class SessionManager {
             tool_call_id: r.toolCallId || undefined,
             timestamp: r.createdAt.toISOString(),
         }));
+    }
+
+    async getVisibleHistory(classId: string): Promise<SessionData['messages']> {
+        const history = await this.getHistory(classId);
+        return history
+            .map(toVisibleHistoryMessage)
+            .filter((message): message is SessionData['messages'][number] => message !== null);
     }
 
     async getSession(classId: string): Promise<SessionData | null> {
@@ -168,8 +193,6 @@ export class SessionManager {
             }
         }
     }
-
-    // ── Progress Operations ──
 
     async getProgress(classId: string): Promise<ProgressData | null> {
         const rows = await this.db.select().from(progress).where(eq(progress.classId, classId)).limit(1);
@@ -207,8 +230,6 @@ export class SessionManager {
         Object.assign(current, updates);
         await this.saveProgress(current);
     }
-
-    // ── Question-Answer Operations ──
 
     async recordQuestionAnswer(data: {
         classId: string;
@@ -303,8 +324,6 @@ export class SessionManager {
         }).where(eq(questionAnswers.id, questionId));
     }
 
-    // ── Test Result Operations ──
-
     async saveTestResult(data: {
         classId: string;
         moduleId?: string;
@@ -347,8 +366,6 @@ export class SessionManager {
         }));
     }
 
-    // ── Flashcard Operations ──
-
     async saveFlashcardDeck(data: {
         classId: string;
         title: string;
@@ -362,7 +379,88 @@ export class SessionManager {
         return deck.id;
     }
 
-    // ── Revision Stats ──
+    async getClassNotes(classId: string): Promise<ClassNotesData | null> {
+        const rows = await this.db.select().from(classNotes).where(eq(classNotes.classId, classId)).limit(1);
+        if (rows.length === 0) return null;
+        return this.toClassNotesData(rows[0]);
+    }
+
+    async updateClassNotesSettings(classId: string, settings: { mode?: ClassNotesData['mode']; auto_generate?: boolean }): Promise<ClassNotesData> {
+        const existing = await this.getClassNotes(classId);
+        if (!existing) {
+            const [created] = await this.db.insert(classNotes).values({
+                classId,
+                mode: settings.mode || 'auto',
+                autoGenerate: settings.auto_generate ?? true,
+            }).returning();
+            return this.toClassNotesData(created);
+        }
+
+        const [updated] = await this.db.update(classNotes).set({
+            mode: settings.mode || existing.mode,
+            autoGenerate: settings.auto_generate ?? existing.auto_generate,
+            updatedAt: new Date(),
+        }).where(eq(classNotes.classId, classId)).returning();
+
+        return this.toClassNotesData(updated);
+    }
+
+    async saveClassNotes(classId: string, data: {
+        title?: string | null;
+        summary?: string | null;
+        markdown?: string | null;
+        key_takeaways?: string[];
+        glossary?: Array<{ term: string; meaning: string }>;
+        action_items?: string[];
+        timeline?: Array<{ title: string; detail: string }>;
+        status?: ClassNotesData['status'];
+        generated_at?: Date | null;
+    }): Promise<ClassNotesData> {
+        const existing = await this.getClassNotes(classId);
+        if (!existing) {
+            const [created] = await this.db.insert(classNotes).values({
+                classId,
+                title: data.title || null,
+                summary: data.summary || null,
+                markdown: data.markdown || null,
+                keyTakeaways: data.key_takeaways || [],
+                glossary: data.glossary || [],
+                actionItems: data.action_items || [],
+                timeline: data.timeline || [],
+                status: data.status || 'ready',
+                generatedAt: data.generated_at || new Date(),
+            }).returning();
+            return this.toClassNotesData(created);
+        }
+
+        const [updated] = await this.db.update(classNotes).set({
+            title: data.title !== undefined ? data.title : existing.title,
+            summary: data.summary !== undefined ? data.summary : existing.summary,
+            markdown: data.markdown !== undefined ? data.markdown : existing.markdown,
+            keyTakeaways: data.key_takeaways !== undefined ? data.key_takeaways : existing.key_takeaways,
+            glossary: data.glossary !== undefined ? data.glossary : existing.glossary,
+            actionItems: data.action_items !== undefined ? data.action_items : existing.action_items,
+            timeline: data.timeline !== undefined ? data.timeline : existing.timeline,
+            status: data.status || existing.status,
+            generatedAt: data.generated_at !== undefined ? data.generated_at : (existing.generated_at ? new Date(existing.generated_at) : null),
+            updatedAt: new Date(),
+        }).where(eq(classNotes.classId, classId)).returning();
+
+        return this.toClassNotesData(updated);
+    }
+
+    async markClassNotesStatus(classId: string, status: ClassNotesData['status']): Promise<void> {
+        const existing = await this.getClassNotes(classId);
+        if (!existing) {
+            await this.db.insert(classNotes).values({ classId, status });
+            return;
+        }
+
+        await this.db.update(classNotes).set({
+            status,
+            updatedAt: new Date(),
+        }).where(eq(classNotes.classId, classId));
+    }
 
     async getRevisionStats(classId: string): Promise<RevisionStats> {
         const allQA = await this.db.select().from(questionAnswers)
@@ -372,7 +470,6 @@ export class SessionManager {
         const dueForReview = allQA.filter(q => q.nextReviewAt && q.nextReviewAt <= now).length;
         const totalCorrect = allQA.filter(q => q.isCorrect).length;
 
-        // Topic breakdown
         const topicMap = new Map<string, { correct: number; total: number }>();
         for (const qa of allQA) {
             const topic = qa.topic || 'General';
@@ -382,7 +479,6 @@ export class SessionManager {
             topicMap.set(topic, entry);
         }
 
-        // Recent history (last 14 days)
         const recentHistory: Array<{ date: string; correct: number; incorrect: number }> = [];
         for (let i = 13; i >= 0; i--) {
             const date = new Date();
@@ -409,8 +505,6 @@ export class SessionManager {
         };
     }
 
-    // ── Helpers ──
-
     private toQuestionAnswerData(row: typeof questionAnswers.$inferSelect): QuestionAnswerData {
         return {
             id: row.id,
@@ -434,6 +528,26 @@ export class SessionManager {
         };
     }
 
+    private toClassNotesData(row: typeof classNotes.$inferSelect): ClassNotesData {
+        return {
+            id: row.id,
+            class_id: row.classId,
+            mode: row.mode as ClassNotesData['mode'],
+            auto_generate: row.autoGenerate,
+            status: row.status as ClassNotesData['status'],
+            title: row.title,
+            summary: row.summary,
+            markdown: row.markdown,
+            key_takeaways: (row.keyTakeaways || []) as string[],
+            glossary: (row.glossary || []) as Array<{ term: string; meaning: string }>,
+            action_items: (row.actionItems || []) as string[],
+            timeline: (row.timeline || []) as Array<{ title: string; detail: string }>,
+            generated_at: row.generatedAt?.toISOString() || null,
+            created_at: row.createdAt.toISOString(),
+            updated_at: row.updatedAt.toISOString(),
+        };
+    }
+
     private toClassData(row: typeof classes.$inferSelect): ClassData {
         return {
             id: row.id,
@@ -448,3 +562,7 @@ export class SessionManager {
         };
     }
 }
+
+
+
+

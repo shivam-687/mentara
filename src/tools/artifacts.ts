@@ -30,6 +30,8 @@ export const createShowOptionsTool = (): Tool => ({
         type: 'object',
         properties: {
             id: { type: 'string', description: 'Unique ID for this option list (e.g. q1, q2)' },
+            title: { type: 'string', description: 'Short question title shown above the options' },
+            description: { type: 'string', description: 'Optional question prompt or hint shown above the options' },
             options: {
                 type: 'array',
                 description: 'List of options to choose from',
@@ -44,6 +46,20 @@ export const createShowOptionsTool = (): Tool => ({
                 }
             } as any,
             selectionMode: { type: 'string', enum: ['single', 'multi'], description: 'Allow single or multiple selections' }
+            ,
+            responseActions: {
+                type: 'array',
+                description: 'Optional footer actions for the option list, such as confirm/cancel',
+                items: {
+                    type: 'object',
+                    properties: {
+                        id: { type: 'string' },
+                        label: { type: 'string' },
+                        variant: { type: 'string', description: 'Visual style like default, outline, ghost' }
+                    },
+                    required: ['id', 'label']
+                }
+            } as any
         },
         required: ['id', 'options']
     },

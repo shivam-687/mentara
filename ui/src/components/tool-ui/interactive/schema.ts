@@ -2,8 +2,6 @@ import { z } from "zod";
 import { ToolUIIdSchema } from "../shared/schema";
 import { defineToolUiContract } from "../shared/contract";
 
-// ── Sub-schemas for each visualization type ──
-
 const DiagramNodeSchema = z.object({
   id: z.string(),
   label: z.string(),
@@ -22,10 +20,12 @@ const DiagramDataSchema = z.object({
   direction: z.enum(["TB", "LR"]).optional().default("TB"),
 }).passthrough();
 
-const MindmapBranchSchema: z.ZodType<{
+type MindmapBranch = {
   label: string;
-  children?: Array<{ label: string; children?: unknown[] }>;
-}> = z.lazy(() =>
+  children?: MindmapBranch[];
+};
+
+const MindmapBranchSchema: z.ZodType<MindmapBranch> = z.lazy(() =>
   z.object({
     label: z.string(),
     children: z.array(MindmapBranchSchema).optional(),
@@ -89,8 +89,6 @@ const InfographicDataSchema = z.object({
   sections: z.array(InfographicSectionSchema),
 }).passthrough();
 
-// ── Main Interactive Schema ──
-
 export const InteractiveTypeEnum = z.enum([
   "diagram",
   "mindmap",
@@ -107,7 +105,7 @@ export const SerializableInteractiveSchema = z
     id: ToolUIIdSchema,
     type: InteractiveTypeEnum,
     title: z.string().default("Visualization"),
-    data: z.any(), // Accept string or object - parsing happens in parseInteractiveData
+    data: z.any(),
   })
   .passthrough();
 
@@ -118,8 +116,6 @@ export type SerializableInteractive = z.infer<
 export interface InteractiveProps extends SerializableInteractive {
   className?: string;
 }
-
-// ── Parsed data types ──
 
 export type DiagramData = z.infer<typeof DiagramDataSchema>;
 export type MindmapData = z.infer<typeof MindmapDataSchema>;
@@ -133,12 +129,10 @@ export function parseInteractiveData(
   dataStr: string,
 ): unknown | null {
   try {
-    // Handle double-stringified JSON from LLMs
     let raw = dataStr;
     if (typeof raw === 'string') {
       try {
         const first = JSON.parse(raw);
-        // If it parsed to a string, it was double-encoded
         if (typeof first === 'string') {
           raw = first;
         }
@@ -147,7 +141,6 @@ export function parseInteractiveData(
       }
     }
 
-    // Parse the actual data
     let parsed: unknown;
     if (typeof raw === 'string') {
       parsed = JSON.parse(raw);
@@ -175,7 +168,6 @@ export function parseInteractiveData(
       return result.data;
     }
 
-    // Log validation errors for debugging
     console.warn(
       `[Interactive] Zod validation failed for type="${type}":`,
       result.error.issues.map(i => `${i.path.join('.')}: ${i.message}`).join(', '),
@@ -187,8 +179,6 @@ export function parseInteractiveData(
     return null;
   }
 }
-
-// ── Contract ──
 
 const contract = defineToolUiContract(
   "Interactive",

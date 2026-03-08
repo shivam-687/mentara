@@ -211,9 +211,11 @@ const AssistantMessage: FC = () => {
           components={{
             Text: MarkdownText,
             tools: {
-              show_code: CodeBlockToolUI,
-              show_options: OptionListToolUI,
-              show_question_flow: QuestionFlowToolUI,
+              by_name: {
+                show_code: CodeBlockToolUI,
+                show_options: OptionListToolUI,
+                show_question_flow: QuestionFlowToolUI,
+              },
               Fallback: ToolFallback,
             },
           }}
@@ -367,3 +369,4 @@ const BranchPicker: FC<BranchPickerPrimitive.Root.Props> = ({
     </BranchPickerPrimitive.Root>
   );
 };
+

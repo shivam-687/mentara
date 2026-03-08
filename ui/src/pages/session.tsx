@@ -56,7 +56,7 @@ export default function Session() {
 
     if (loading || !classData) {
         return (
-            <div className="animate-fade-in -mx-6 -my-8 flex h-[calc(100vh-3.5rem)] items-center justify-center">
+            <div className="animate-fade-in flex h-[calc(100vh-3.5rem)] items-center justify-center">
                 <div className="text-center">
                     <div className="h-8 w-8 mx-auto mb-3 animate-spin rounded-full border-2 border-[var(--color-accent)] border-t-transparent" />
                     <p className="text-sm text-[var(--color-text-secondary)]">Loading session...</p>
@@ -69,7 +69,7 @@ export default function Session() {
     const isLearning = classData.status === 'in_progress' || classData.status === 'locked';
 
     return (
-        <div className="animate-fade-in -mx-6 -my-8 flex h-[calc(100vh-3.5rem)] flex-col">
+        <div className="animate-fade-in flex h-[calc(100vh-3.5rem)] flex-col">
             {/* Compact Top Bar — only back button + title */}
             <div className="flex items-center gap-3 border-b border-[var(--color-border)] bg-[var(--color-bg-surface)] px-4 py-2 z-10 relative shadow-sm flex-shrink-0">
                 <Link to="/">
@@ -83,7 +83,7 @@ export default function Session() {
             </div>
 
             {/* Phase-Aware Body — uses all remaining space */}
-            <div className="flex-1 overflow-hidden bg-[var(--color-bg-base)]">
+            <div className="min-h-0 flex-1 overflow-hidden bg-[var(--color-bg-base)]">
                 {classData.status === 'clarifying' && (
                     <SetupPhase classData={classData} onUpdate={handleUpdate} />
                 )}
@@ -100,3 +100,4 @@ export default function Session() {
         </div>
     );
 }
+

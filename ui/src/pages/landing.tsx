@@ -1,667 +1,284 @@
-// ── Mentara Landing Page ──
-// Anthropic-inspired premium design with animated illustrations, waitlist, and SEO.
+import { useState } from 'react';
+import { Link } from 'react-router-dom';
+import { SignedIn, SignedOut, SignInButton } from '@clerk/clerk-react';
+import { motion } from 'framer-motion';
+import { ArrowRight, BookOpen, Brain, Compass, NotebookPen, Sparkles, Wand2, KeyRound, CheckCircle2 } from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
+import { MentaraLogo } from '@/components/brand/mentara-logo';
+import { MentaraHeroIllustration } from '@/components/brand/mentara-hero-illustration';
+import { api } from '@/lib/api';
 
-import { useState, useEffect, useRef } from 'react';
-import { SignInButton } from '@clerk/clerk-react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { GraduationCap, Sparkles, Brain, BookOpen, BarChart3, ChevronRight, Check, ArrowRight, Zap, Play, Layout, Award } from 'lucide-react';
-
-// ── Advanced Animated SVG: Knowledge Neural Network ──
-function AdvancedNeuralAnimation() {
-    const [mousePos, setMousePos] = useState({ x: 0, y: 0 });
-    const [hoveredNode, setHoveredNode] = useState<number | null>(null);
-    const containerRef = useRef<HTMLDivElement>(null);
-
-    const handleMouseMove = (e: React.MouseEvent) => {
-        if (!containerRef.current) return;
-        const rect = containerRef.current.getBoundingClientRect();
-        const x = (e.clientX - rect.left) / rect.width - 0.5;
-        const y = (e.clientY - rect.top) / rect.height - 0.5;
-        setMousePos({ x, y });
-    };
-
-    const nodes = [
-        { id: 0, x: 120, y: 100, r: 20, label: 'Learn', desc: 'Ingest new concepts', delay: 0 },
-        { id: 1, x: 300, y: 80, r: 24, label: 'Understand', desc: 'Connect base ideas', delay: 0.3 },
-        { id: 2, x: 250, y: 200, r: 18, label: 'Practice', desc: 'Apply knowledge', delay: 0.6 },
-        { id: 3, x: 180, y: 280, r: 16, label: 'Review', desc: 'Spaced repetition', delay: 0.9 },
-        { id: 4, x: 400, y: 200, r: 22, label: 'Master', desc: 'Deep comprehension', delay: 1.2 },
-        { id: 5, x: 480, y: 120, r: 26, label: 'Create', desc: 'Generate new ideas', delay: 1.5 },
-        { id: 6, x: 350, y: 310, r: 17, label: 'Connect', desc: 'Synthesize topics', delay: 1.8 },
-        { id: 7, x: 500, y: 300, r: 20, label: 'Grow', desc: 'Expand horizons', delay: 2.1 },
-    ];
-
-    const lines = [
-        [120, 100, 300, 80], [120, 100, 250, 200], [120, 100, 180, 280],
-        [300, 80, 480, 120], [300, 80, 400, 200],
-        [250, 200, 400, 200], [250, 200, 350, 310],
-        [180, 280, 350, 310], [400, 200, 480, 120],
-        [400, 200, 500, 300], [350, 310, 500, 300],
-        [480, 120, 500, 300],
-    ];
-
+function SectionLabel({ children }: { children: React.ReactNode }) {
     return (
-        <div
-            ref={containerRef}
-            onMouseMove={handleMouseMove}
-            onMouseLeave={() => setMousePos({ x: 0, y: 0 })}
-            className="relative w-full aspect-[3/2] flex items-center justify-center cursor-crosshair"
-        >
-            {/* Interactive Tooltip */}
-            <AnimatePresence>
-                {hoveredNode !== null && (
-                    <motion.div
-                        initial={{ opacity: 0, y: 10, scale: 0.9 }}
-                        animate={{ opacity: 1, y: 0, scale: 1 }}
-                        exit={{ opacity: 0, y: 10, scale: 0.9 }}
-                        className="absolute z-10 bg-white/90 backdrop-blur-md border border-[#E5E2DC] shadow-xl rounded-xl p-3 pointer-events-none"
-                        style={{
-                            left: `calc(${(nodes[hoveredNode].x / 600) * 100}% - 60px)`,
-                            top: `calc(${(nodes[hoveredNode].y / 400) * 100}% - 70px)`,
-                            width: 140
-                        }}
-                    >
-                        <p className="text-sm font-bold text-[#1A1A1A]">{nodes[hoveredNode].label}</p>
-                        <p className="text-xs text-[#6B6B6B] leading-tight mt-1">{nodes[hoveredNode].desc}</p>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-
-            <motion.svg
-                viewBox="0 0 600 400"
-                className="w-full h-full overflow-visible"
-                animate={{
-                    x: mousePos.x * -20,
-                    y: mousePos.y * -20,
-                }}
-                transition={{ type: 'spring', stiffness: 50, damping: 20 }}
-            >
-                <defs>
-                    <linearGradient id="nodeGrad" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#C96442" stopOpacity="0.9" />
-                        <stop offset="100%" stopColor="#E8A87C" stopOpacity="0.7" />
-                    </linearGradient>
-                    <linearGradient id="nodeGradHover" x1="0%" y1="0%" x2="100%" y2="100%">
-                        <stop offset="0%" stopColor="#1A1A1A" stopOpacity="0.9" />
-                        <stop offset="100%" stopColor="#4A4A4A" stopOpacity="0.8" />
-                    </linearGradient>
-                    <linearGradient id="lineGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                        <stop offset="0%" stopColor="#C96442" stopOpacity="0.2" />
-                        <stop offset="50%" stopColor="#C96442" stopOpacity="0.5" />
-                        <stop offset="100%" stopColor="#C96442" stopOpacity="0.2" />
-                    </linearGradient>
-                    <filter id="glow" x="-20%" y="-20%" width="140%" height="140%">
-                        <feGaussianBlur stdDeviation="4" result="blur" />
-                        <feComposite in="SourceGraphic" in2="blur" operator="over" />
-                    </filter>
-                    <radialGradient id="pulseGrad" cx="50%" cy="50%" r="50%">
-                        <stop offset="0%" stopColor="#C96442" stopOpacity="0.3" />
-                        <stop offset="100%" stopColor="#C96442" stopOpacity="0" />
-                    </radialGradient>
-                </defs>
-
-                {/* Connection lines */}
-                {lines.map(([x1, y1, x2, y2], i) => (
-                    <g key={`line-${i}`}>
-                        <line x1={x1} y1={y1} x2={x2} y2={y2} stroke="url(#lineGrad)" strokeWidth="1.5" />
-
-                        {/* Data Particles */}
-                        <circle r="3" fill="#C96442" filter="url(#glow)">
-                            <animateMotion
-                                path={`M${x1},${y1} L${x2},${y2}`}
-                                dur={`${2 + (i % 3)}s`}
-                                repeatCount="indefinite"
-                                begin={`${i * 0.3}s`}
-                            />
-                            <animate attributeName="opacity" values="0;1;0" dur={`${2 + (i % 3)}s`} repeatCount="indefinite" begin={`${i * 0.3}s`} />
-                        </circle>
-                    </g>
-                ))}
-
-                {/* Nodes */}
-                {nodes.map((node) => {
-                    const isHovered = hoveredNode === node.id;
-                    return (
-                        <g
-                            key={`node-${node.id}`}
-                            onMouseEnter={() => setHoveredNode(node.id)}
-                            onMouseLeave={() => setHoveredNode(null)}
-                            className="cursor-pointer transition-all duration-300 pointer-events-auto"
-                        >
-                            {/* Pulse ring (only visible if not hovered to reduce noise, or always visible) */}
-                            {!isHovered && (
-                                <circle cx={node.x} cy={node.y} r={node.r + 12} fill="url(#pulseGrad)">
-                                    <animate attributeName="r" values={`${node.r + 5};${node.r + 18};${node.r + 5}`} dur="3s" repeatCount="indefinite" begin={`${node.delay}s`} />
-                                    <animate attributeName="opacity" values="0.3;0;0.3" dur="3s" repeatCount="indefinite" begin={`${node.delay}s`} />
-                                </circle>
-                            )}
-
-                            {/* Hover Halo */}
-                            {isHovered && (
-                                <circle cx={node.x} cy={node.y} r={node.r + 8} fill="#C96442" opacity="0.15" filter="url(#glow)" />
-                            )}
-
-                            {/* Main node */}
-                            <motion.circle
-                                cx={node.x}
-                                cy={node.y}
-                                r={isHovered ? node.r + 4 : node.r}
-                                fill={isHovered ? "url(#nodeGradHover)" : "url(#nodeGrad)"}
-                                filter="url(#glow)"
-                                initial={{ opacity: 0, scale: 0 }}
-                                animate={{ opacity: 1, scale: 1 }}
-                                transition={{ delay: node.delay, duration: 0.6 }}
-                            />
-
-                            {/* Label */}
-                            <motion.text
-                                x={node.x}
-                                y={node.y + node.r + 18}
-                                textAnchor="middle"
-                                fill={isHovered ? "#1A1A1A" : "#6B6B6B"}
-                                fontSize={isHovered ? "12" : "11"}
-                                fontFamily="Inter, sans-serif"
-                                fontWeight={isHovered ? "700" : "500"}
-                                initial={{ opacity: 0 }}
-                                animate={{ opacity: 1 }}
-                                transition={{ delay: node.delay + 0.3 }}
-                                className="pointer-events-none transition-all duration-200"
-                            >
-                                {node.label}
-                            </motion.text>
-                        </g>
-                    );
-                })}
-
-                {/* Background Decor */}
-                <g transform="translate(280, 170)" opacity="0.03">
-                    <path d="M20 0C8.96 0 0 8.96 0 20s8.96 20 20 20 20-8.96 20-20S31.04 0 20 0zm0 36c-8.84 0-16-7.16-16-16S11.16 4 20 4s16 7.16 16 16-7.16 16-16 16z" fill="#1A1A1A" />
-                </g>
-            </motion.svg>
-        </div>
-    );
-}
-
-// ── Scroll-reveal hook ──
-function useReveal() {
-    const ref = useRef<HTMLDivElement>(null);
-    const [visible, setVisible] = useState(false);
-
-    useEffect(() => {
-        const observer = new IntersectionObserver(
-            ([entry]) => { if (entry.isIntersecting) setVisible(true); },
-            { threshold: 0.15 }
-        );
-        if (ref.current) observer.observe(ref.current);
-        return () => observer.disconnect();
-    }, []);
-
-    return { ref, visible };
-}
-
-function RevealSection({ children, className = '', delay = 0 }: { children: React.ReactNode; className?: string; delay?: number }) {
-    const { ref, visible } = useReveal();
-    return (
-        <div
-            ref={ref}
-            className={className}
-            style={{
-                opacity: visible ? 1 : 0,
-                transform: visible ? 'translateY(0)' : 'translateY(32px)',
-                transition: `opacity 0.7s ease ${delay}s, transform 0.7s ease ${delay}s`,
-            }}
-        >
+        <div className="inline-flex items-center gap-2 rounded-full border border-[#D9D0C7] bg-white/85 px-3 py-1 text-[11px] font-medium uppercase tracking-[0.24em] text-[#7A685D] backdrop-blur-sm">
+            <Sparkles className="h-3 w-3 text-[#D36A3A]" />
             {children}
         </div>
     );
 }
 
-// ── Waitlist Form ──
-function WaitlistForm({ variant = 'hero' }: { variant?: 'hero' | 'cta' }) {
-    const [email, setEmail] = useState('');
-    const [name, setName] = useState('');
-    const [status, setStatus] = useState<'idle' | 'loading' | 'success' | 'error'>('idle');
-    const [message, setMessage] = useState('');
-
-    const handleSubmit = async (e: React.FormEvent) => {
-        e.preventDefault();
-        if (!email.includes('@')) return;
-
-        setStatus('loading');
-        try {
-            const res = await fetch('/api/waitlist', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ email, name }),
-            });
-            const data = await res.json();
-            if (data.success) {
-                setStatus('success');
-                setMessage(data.message || "You're on the list!");
-            } else {
-                setStatus('error');
-                setMessage(data.error || 'Something went wrong.');
-            }
-        } catch {
-            setStatus('error');
-            setMessage('Connection failed. Please try again.');
-        }
-    };
-
-    if (status === 'success') {
-        return (
-            <div className={`flex items-center gap-3 px-6 py-4 rounded-2xl ${variant === 'hero' ? 'bg-[#E6F4EC]' : 'bg-white/10 backdrop-blur'}`}>
-                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#3B8A5A]">
-                    <Check className="h-5 w-5 text-white" />
-                </div>
-                <div>
-                    <p className={`font-semibold ${variant === 'hero' ? 'text-[#1A1A1A]' : 'text-white'}`}>{message}</p>
-                    <p className={`text-sm ${variant === 'hero' ? 'text-[#3B8A5A]' : 'text-white/70'}`}>We'll notify you when Mentara launches.</p>
-                </div>
-            </div>
-        );
-    }
-
-    const isHero = variant === 'hero';
-
+function MetricChip({ label }: { label: string }) {
     return (
-        <form onSubmit={handleSubmit} className="space-y-3">
-            <div className={`flex flex-col sm:flex-row gap-3 ${isHero ? '' : ''}`}>
-                <input
-                    type="text"
-                    value={name}
-                    onChange={e => setName(e.target.value)}
-                    placeholder="Your name"
-                    className={`px-4 py-3 rounded-xl text-sm outline-none border transition-all ${isHero
-                        ? 'border-[#E5E2DC] bg-white focus:border-[#C96442] focus:shadow-[0_0_0_3px_rgba(201,100,66,0.1)]'
-                        : 'border-white/20 bg-white/10 text-white placeholder:text-white/50 focus:border-white/40 backdrop-blur'
-                        }`}
-                />
-                <input
-                    type="email"
-                    value={email}
-                    onChange={e => setEmail(e.target.value)}
-                    placeholder="your@email.com"
-                    required
-                    className={`px-4 py-3 rounded-xl text-sm outline-none border transition-all flex-1 ${isHero
-                        ? 'border-[#E5E2DC] bg-white focus:border-[#C96442] focus:shadow-[0_0_0_3px_rgba(201,100,66,0.1)]'
-                        : 'border-white/20 bg-white/10 text-white placeholder:text-white/50 focus:border-white/40 backdrop-blur'
-                        }`}
-                />
-                <button
-                    type="submit"
-                    disabled={status === 'loading'}
-                    className={`px-6 py-3 rounded-xl text-sm font-semibold transition-all flex items-center justify-center gap-2 ${isHero
-                        ? 'bg-[#1A1A1A] text-white hover:bg-[#333] shadow-lg hover:shadow-xl disabled:opacity-60'
-                        : 'bg-white text-[#1A1A1A] hover:bg-white/90 shadow-lg disabled:opacity-60'
-                        }`}
-                >
-                    {status === 'loading' ? (
-                        <div className="h-4 w-4 animate-spin rounded-full border-2 border-current border-t-transparent" />
-                    ) : (
-                        <>Join Waitlist <ArrowRight className="h-4 w-4" /></>
-                    )}
-                </button>
-            </div>
-            {status === 'error' && <p className="text-sm text-[#C94242]">{message}</p>}
-        </form>
+        <motion.div
+            whileHover={{ y: -2 }}
+            transition={{ duration: 0.18, ease: 'easeOut' }}
+            className="rounded-full border border-[#DDD4CB] bg-white/75 px-3 py-2 text-sm text-[#6D5D54] backdrop-blur-sm"
+        >
+            {label}
+        </motion.div>
     );
 }
 
-// ── Main Landing Page ──
+function FeatureCard({
+    icon: Icon,
+    title,
+    description,
+}: {
+    icon: React.ComponentType<{ className?: string }>;
+    title: string;
+    description: string;
+}) {
+    return (
+        <motion.div
+            whileHover={{ y: -4, scale: 1.01 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="rounded-[28px] border border-[#DDD4CB] bg-white/88 p-5 shadow-[0_18px_60px_rgba(44,31,24,0.07)]"
+        >
+            <div className="mb-4 flex h-11 w-11 items-center justify-center rounded-2xl bg-[#F4E1D7] text-[#D36A3A]">
+                <Icon className="h-5 w-5" />
+            </div>
+            <h3 className="text-lg font-semibold text-[#201813]" style={{ fontFamily: 'var(--font-heading)' }}>{title}</h3>
+            <p className="mt-2 text-sm leading-6 text-[#6D5D54]">{description}</p>
+        </motion.div>
+    );
+}
+
+function HowStep({
+    index,
+    title,
+    description,
+}: {
+    index: string;
+    title: string;
+    description: string;
+}) {
+    return (
+        <motion.div
+            whileHover={{ y: -4 }}
+            transition={{ duration: 0.22, ease: 'easeOut' }}
+            className="rounded-[28px] border border-[#DDD4CB] bg-[#FFFDF9] p-5 shadow-[0_12px_36px_rgba(44,31,24,0.05)]"
+        >
+            <div className="text-[11px] font-semibold uppercase tracking-[0.28em] text-[#D36A3A]">{index}</div>
+            <h3 className="mt-3 text-lg font-semibold text-[#201813]" style={{ fontFamily: 'var(--font-heading)' }}>{title}</h3>
+            <p className="mt-2 text-sm leading-6 text-[#6D5D54]">{description}</p>
+        </motion.div>
+    );
+}
+
 export default function LandingPage() {
-    useEffect(() => {
-        document.title = 'Mentara — AI-Powered Adaptive Learning That Truly Understands You';
-        // Set meta description
-        let meta = document.querySelector('meta[name="description"]') as HTMLMetaElement;
-        if (!meta) {
-            meta = document.createElement('meta');
-            meta.name = 'description';
-            document.head.appendChild(meta);
+    const [waitlistName, setWaitlistName] = useState('');
+    const [waitlistEmail, setWaitlistEmail] = useState('');
+    const [waitlistMessage, setWaitlistMessage] = useState('');
+    const [waitlistBusy, setWaitlistBusy] = useState(false);
+
+    const handleJoinWaitlist = async (event: React.FormEvent) => {
+        event.preventDefault();
+        if (!waitlistEmail.trim()) return;
+
+        setWaitlistBusy(true);
+        setWaitlistMessage('');
+        try {
+            const result = await api.joinWaitlist({
+                name: waitlistName.trim() || undefined,
+                email: waitlistEmail.trim(),
+            });
+            setWaitlistMessage(result.message);
+            setWaitlistEmail('');
+            setWaitlistName('');
+        } catch (error) {
+            setWaitlistMessage('Could not join the waitlist right now.');
+        } finally {
+            setWaitlistBusy(false);
         }
-        meta.content = 'Mentara is an intelligent learning system that adapts to your pace, creates visual explanations, and helps you master any topic through personalized AI tutoring with interactive diagrams, assessments, and spaced repetition.';
-    }, []);
+    };
 
     return (
-        <div className="min-h-screen bg-[#F5F2ED]" style={{ fontFamily: "'Inter', -apple-system, sans-serif" }}>
-            {/* ── Navigation ── */}
-            <nav className="sticky top-0 z-50 border-b border-[#E5E2DC]/60 bg-[#F5F2ED]/80 backdrop-blur-xl">
-                <div className="mx-auto flex h-16 max-w-6xl items-center justify-between px-6">
-                    <div className="flex items-center gap-2.5">
-                        <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-[#C96442]">
-                            <GraduationCap className="h-5 w-5 text-white" />
-                        </div>
-                        <span className="text-xl font-semibold tracking-tight" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>
-                            Mentara
-                        </span>
-                    </div>
-                    <div className="flex items-center gap-4">
-                        <a href="#features" className="hidden sm:block text-sm text-[#6B6B6B] hover:text-[#1A1A1A] transition-colors">Features</a>
-                        <a href="#how-it-works" className="hidden sm:block text-sm text-[#6B6B6B] hover:text-[#1A1A1A] transition-colors">How It Works</a>
-                        <SignInButton mode="modal">
-                            <button className="px-4 py-2 rounded-lg text-sm font-medium bg-[#1A1A1A] text-white hover:bg-[#333] transition-colors shadow-sm">
-                                Sign In
-                            </button>
-                        </SignInButton>
-                    </div>
-                </div>
-            </nav>
+        <div className="mx-auto w-full max-w-[80rem] space-y-16 overflow-x-clip pb-20">
+            <section className="relative overflow-hidden rounded-[40px] border border-[#DDD4CB] bg-[linear-gradient(180deg,#FFF9F4_0%,#F7EEE6_100%)] px-6 py-10 shadow-[0_24px_80px_rgba(44,31,24,0.08)] sm:px-8 lg:px-12 lg:py-14">
+                <div className="absolute inset-x-0 top-0 h-40 bg-[radial-gradient(circle_at_top,rgba(211,106,58,0.18),transparent_55%)]" />
+                <motion.div
+                    className="absolute -left-16 top-14 h-32 w-32 rounded-full bg-[#E8B89A]/25 blur-3xl"
+                    animate={{ x: [0, 14, 0], y: [0, -10, 0] }}
+                    transition={{ duration: 9, repeat: Infinity, ease: 'easeInOut' }}
+                />
+                <motion.div
+                    className="absolute right-8 top-8 h-24 w-24 rounded-full bg-[#D36A3A]/10 blur-3xl"
+                    animate={{ x: [0, -12, 0], y: [0, 14, 0] }}
+                    transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut', delay: 0.8 }}
+                />
 
-            {/* ── Hero Section ── */}
-            <section className="relative overflow-hidden">
-                {/* Subtle gradient orbs */}
-                <div className="absolute top-20 -left-40 w-96 h-96 rounded-full bg-[#C96442]/5 blur-3xl" />
-                <div className="absolute bottom-0 right-0 w-80 h-80 rounded-full bg-[#E8D5CC]/40 blur-3xl" />
+                <div className="relative grid items-center gap-10 lg:grid-cols-[0.88fr_1.12fr]">
+                    <div>
+                        <MentaraLogo animated className="mb-5" />
+                        <SectionLabel>AI Tutor Product Beta</SectionLabel>
+                        <motion.h1
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.55, delay: 0.05 }}
+                            className="mt-6 max-w-3xl text-5xl leading-[0.95] tracking-tight text-[#1F1712] sm:text-6xl xl:text-7xl"
+                            style={{ fontFamily: 'var(--font-heading)' }}
+                        >
+                            Structured teaching with memory.
+                        </motion.h1>
+                        <motion.p
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.55, delay: 0.12 }}
+                            className="mt-5 max-w-xl text-base leading-8 text-[#64534A] sm:text-lg"
+                        >
+                            Mentara builds a roadmap, teaches in sequence, checks understanding, keeps revision memory, and turns classes into reusable notes.
+                        </motion.p>
 
-                <div className="mx-auto max-w-6xl px-6 pt-20 pb-16">
-                    <div className="grid lg:grid-cols-2 gap-12 items-center">
-                        {/* Left: Copy */}
-                        <div>
-                            <div className="inline-flex items-center gap-2 px-3 py-1.5 rounded-full bg-[#F5E6DF] text-[#C96442] text-xs font-semibold mb-6">
-                                <Sparkles className="h-3.5 w-3.5" />
-                                AI-Powered Adaptive Learning
+                        <motion.form
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.55, delay: 0.18 }}
+                            onSubmit={handleJoinWaitlist}
+                            className="mt-8 rounded-[28px] border border-[#DDD4CB] bg-white/82 p-4 shadow-[0_14px_40px_rgba(44,31,24,0.06)] backdrop-blur-sm"
+                        >
+                            <div className="flex items-center gap-2 text-[11px] font-medium uppercase tracking-[0.24em] text-[#8A7467]">
+                                <Sparkles className="h-3.5 w-3.5 text-[#D36A3A]" />
+                                Join The Waitlist
                             </div>
-                            <h1 className="text-4xl sm:text-5xl lg:text-[3.5rem] leading-[1.1] font-bold text-[#1A1A1A] mb-6" style={{ fontFamily: "'Playfair Display', Georgia, serif" }}>
-                                Learn anything, <br />
-                                <span className="relative">
-                                    <span className="relative z-10">deeply understood</span>
-                                    <span className="absolute bottom-1 left-0 w-full h-3 bg-[#C96442]/15 rounded-sm -z-0" />
-                                </span>
-                            </h1>
-                            <p className="text-lg text-[#6B6B6B] leading-relaxed mb-8 max-w-lg">
-                                Mentara is an AI tutor that adapts to how you think. It creates personalized roadmaps,
-                                teaches with interactive visual content, and verifies your understanding at every step —
-                                like having a brilliant private tutor available 24/7.
-                            </p>
-                            <WaitlistForm variant="hero" />
-                            <p className="mt-3 text-xs text-[#9B9B9B]">
-                                Join 2,400+ learners on the waitlist. No spam, ever.
-                            </p>
-                        </div>
+                            <div className="mt-3 grid gap-3 sm:grid-cols-[0.8fr_1.2fr]">
+                                <Input
+                                    value={waitlistName}
+                                    onChange={e => setWaitlistName(e.target.value)}
+                                    placeholder="Your name"
+                                    className="h-11 bg-white/80"
+                                />
+                                <Input
+                                    value={waitlistEmail}
+                                    onChange={e => setWaitlistEmail(e.target.value)}
+                                    placeholder="Email address"
+                                    type="email"
+                                    className="h-11 bg-white/80"
+                                />
+                            </div>
+                            <div className="mt-3 flex flex-wrap gap-3">
+                                <Button type="submit" size="lg" className="rounded-full px-6" disabled={waitlistBusy || !waitlistEmail.trim()}>
+                                    {waitlistBusy ? 'Joining...' : 'Request Beta Access'}
+                                    <ArrowRight className="h-4 w-4" />
+                                </Button>
+                                <SignedOut>
+                                    <SignInButton mode="modal">
+                                        <Button size="lg" variant="outline" className="rounded-full px-6">
+                                            Sign In Instead
+                                        </Button>
+                                    </SignInButton>
+                                </SignedOut>
+                                <SignedIn>
+                                    <Link to="/create">
+                                        <Button size="lg" variant="outline" className="rounded-full px-6">
+                                            Open App
+                                        </Button>
+                                    </Link>
+                                </SignedIn>
+                            </div>
+                            {waitlistMessage ? (
+                                <p className="mt-3 text-sm text-[#6A5A51]">{waitlistMessage}</p>
+                            ) : (
+                                <p className="mt-3 text-sm text-[#6A5A51]">Best for early users who want roadmap-driven AI teaching, notes, and BYOK OpenRouter support.</p>
+                            )}
+                        </motion.form>
 
-                        {/* Right: Animated interactive demo */}
-                        <div className="relative hidden lg:block">
-                            <AdvancedNeuralAnimation />
-                        </div>
+                        <motion.div
+                            initial={{ opacity: 0, y: 14 }}
+                            animate={{ opacity: 1, y: 0 }}
+                            transition={{ duration: 0.55, delay: 0.24 }}
+                            className="mt-7 flex flex-wrap gap-3"
+                        >
+                            <MetricChip label="Roadmap-first teaching" />
+                            <MetricChip label="Running notes" />
+                            <MetricChip label="Revision memory" />
+                            <MetricChip label="BYOK OpenRouter" />
+                        </motion.div>
                     </div>
+
+                    <MentaraHeroIllustration />
                 </div>
             </section>
 
-            {/* ── Social Proof Bar ── */}
-            <section className="border-y border-[#E5E2DC] bg-white/50">
-                <div className="mx-auto max-w-6xl px-6 py-8">
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-8 text-center">
+            <section id="product-story" className="space-y-7">
+                <div className="max-w-3xl">
+                    <SectionLabel>Why It Can Be A Product</SectionLabel>
+                    <h2 className="mt-5 text-3xl text-[#201813] sm:text-4xl" style={{ fontFamily: 'var(--font-heading)' }}>
+                        Mentara is strongest when it behaves like a class product, not a generic AI wrapper.
+                    </h2>
+                </div>
+                <div className="grid gap-5 sm:grid-cols-2 xl:grid-cols-4">
+                    <FeatureCard icon={Compass} title="Roadmap Before Teaching" description="Every class starts with structure, so the tutor can teach in sequence instead of improvising from prompt to prompt." />
+                    <FeatureCard icon={Brain} title="Adaptive Tutor" description="The tutor explains, checks understanding, and uses artifacts when they clarify the idea." />
+                    <FeatureCard icon={NotebookPen} title="NoteTaker Companion" description="A second memory surface captures study notes, glossary items, and next-step prompts while the class is running." />
+                    <FeatureCard icon={KeyRound} title="BYOK OpenRouter" description="Early users can bring their own OpenRouter key and run Mentara on their own model budget." />
+                </div>
+            </section>
+
+            <section className="grid gap-6 lg:grid-cols-[0.92fr_1.08fr]">
+                <div className="rounded-[36px] border border-[#DDD4CB] bg-[#201813] p-8 text-white shadow-[0_20px_70px_rgba(42,28,21,0.16)]">
+                    <SectionLabel>How To Use</SectionLabel>
+                    <h2 className="mt-5 text-3xl sm:text-4xl" style={{ fontFamily: 'var(--font-heading)' }}>
+                        Four steps. One durable learning workspace.
+                    </h2>
+                    <div className="mt-6 space-y-4 text-sm leading-7 text-white/78">
+                        <p>Choose a goal, lock the roadmap, learn subtopic by subtopic, and keep the resulting notes and revision memory after the class ends.</p>
+                        <div className="rounded-[24px] border border-white/12 bg-white/8 p-4">
+                            <p className="font-semibold text-white">Who it is for</p>
+                            <p className="mt-2 text-white/72">Interview prep, technical upskilling, AI systems learning, and any topic where sequence and revision matter more than pure chat.</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div className="grid gap-5 sm:grid-cols-2">
+                    <HowStep index="01" title="Set the goal" description="Choose the topic, experience level, and depth. Mentara uses that to generate a real class structure." />
+                    <HowStep index="02" title="Lock the roadmap" description="Freeze the class plan before teaching starts, so the first lesson is deterministic instead of agent noise." />
+                    <HowStep index="03" title="Learn with artifacts" description="The tutor explains, asks checks for understanding, and uses diagrams, mind maps, or code only when they help." />
+                    <HowStep index="04" title="Keep the memory" description="Open running notes during the class, then revisit the completion dossier, revision stats, and weak concepts later." />
+                </div>
+            </section>
+
+            <section className="rounded-[36px] border border-[#DDD4CB] bg-[linear-gradient(180deg,#FFFDF9_0%,#F6EDE4_100%)] p-8 shadow-[0_18px_70px_rgba(44,31,24,0.06)] lg:p-10">
+                <div className="grid gap-8 lg:grid-cols-[0.95fr_1.05fr] lg:items-center">
+                    <div>
+                        <SectionLabel>Launch Posture</SectionLabel>
+                        <h2 className="mt-5 text-3xl text-[#201813] sm:text-4xl" style={{ fontFamily: 'var(--font-heading)' }}>
+                            Launch it as a focused beta, not a broad AI tutor for everyone.
+                        </h2>
+                        <p className="mt-5 text-base leading-8 text-[#64534A]">
+                            The clearest path is a narrow product for technical learning, interview prep, or AI systems education. That is where roadmap, notes, and revision memory become paid value instead of decoration.
+                        </p>
+                    </div>
+                    <div className="grid gap-4 sm:grid-cols-2">
                         {[
-                            { value: '10x', label: 'Faster comprehension' },
-                            { value: '94%', label: 'Material retention' },
-                            { value: '50+', label: 'Visual artifact types' },
-                            { value: '24/7', label: 'Available anytime' },
-                        ].map((stat, i) => (
-                            <RevealSection key={i} delay={i * 0.1}>
-                                <p className="text-3xl font-bold text-[#1A1A1A]" style={{ fontFamily: "'Playfair Display', serif" }}>{stat.value}</p>
-                                <p className="text-sm text-[#6B6B6B] mt-1">{stat.label}</p>
-                            </RevealSection>
+                            { label: 'Waitlist for beta users and early design partners', icon: CheckCircle2 },
+                            { label: 'BYOK support for users who want their own model budget', icon: KeyRound },
+                            { label: 'Structured how-to-use flow instead of vague startup copy', icon: Wand2 },
+                            { label: 'Motion graphic hero that demonstrates the product behavior', icon: BookOpen },
+                        ].map(({ label, icon: Icon }) => (
+                            <motion.div
+                                key={label}
+                                whileHover={{ y: -4, scale: 1.01 }}
+                                transition={{ duration: 0.22, ease: 'easeOut' }}
+                                className="rounded-[26px] border border-[#DDD4CB] bg-white p-5"
+                            >
+                                <Icon className="h-5 w-5 text-[#D36A3A]" />
+                                <p className="mt-3 text-sm leading-6 text-[#5F4F46]">{label}</p>
+                            </motion.div>
                         ))}
                     </div>
                 </div>
             </section>
-
-            {/* ── Features Section ── */}
-            <section id="features" className="py-24">
-                <div className="mx-auto max-w-6xl px-6">
-                    <RevealSection className="text-center mb-16">
-                        <p className="text-sm font-semibold text-[#C96442] uppercase tracking-widest mb-3">Why Mentara</p>
-                        <h2 className="text-3xl sm:text-4xl font-bold text-[#1A1A1A] mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
-                            Learning that adapts to you
-                        </h2>
-                        <p className="text-lg text-[#6B6B6B] max-w-2xl mx-auto">
-                            Unlike static courses or generic chatbots, Mentara builds a living understanding of your knowledge gaps and learning style.
-                        </p>
-                    </RevealSection>
-
-                    <div className="grid md:grid-cols-3 gap-8">
-                        {[
-                            {
-                                icon: Brain,
-                                title: 'Adaptive Intelligence',
-                                description: 'Your AI tutor adjusts difficulty, pacing, and teaching style based on your responses. Struggling? It breaks concepts down. Excelling? It challenges you further.',
-                                gradient: 'from-[#C96442]/10 to-[#E8D5CC]/20',
-                            },
-                            {
-                                icon: Sparkles,
-                                title: 'Visual Learning Artifacts',
-                                description: 'Concepts come alive through interactive diagrams, mind maps, comparison tables, step-by-step animations, and infographics — generated in real-time.',
-                                gradient: 'from-[#3B8A5A]/10 to-[#E6F4EC]/20',
-                            },
-                            {
-                                icon: BarChart3,
-                                title: 'Mastery Tracking',
-                                description: 'Every answer is tracked with spaced repetition scheduling. Flashcards, mini-tests, and comprehensive assessments ensure you actually retain what you learn.',
-                                gradient: 'from-[#C9892A]/10 to-[#FFF4E5]/20',
-                            },
-                        ].map((feature, i) => (
-                            <RevealSection key={i} delay={i * 0.15}>
-                                <div className={`p-8 rounded-2xl bg-gradient-to-br ${feature.gradient} border border-[#E5E2DC]/50 h-full group hover:shadow-lg transition-shadow duration-300`}>
-                                    <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-white shadow-sm mb-5">
-                                        <feature.icon className="h-6 w-6 text-[#C96442]" />
-                                    </div>
-                                    <h3 className="text-lg font-semibold text-[#1A1A1A] mb-2">{feature.title}</h3>
-                                    <p className="text-sm text-[#6B6B6B] leading-relaxed">{feature.description}</p>
-                                </div>
-                            </RevealSection>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── How It Works ── */}
-            <section id="how-it-works" className="py-24 bg-white">
-                <div className="mx-auto max-w-6xl px-6">
-                    <RevealSection className="text-center mb-16">
-                        <p className="text-sm font-semibold text-[#C96442] uppercase tracking-widest mb-3">How It Works</p>
-                        <h2 className="text-3xl sm:text-4xl font-bold text-[#1A1A1A] mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
-                            From curiosity to mastery in four steps
-                        </h2>
-                    </RevealSection>
-
-                    <div className="grid md:grid-cols-4 gap-6">
-                        {[
-                            { step: '01', title: 'Tell us what to learn', desc: 'Describe any topic — from "teach me React" to "advanced quantum mechanics."', icon: BookOpen },
-                            { step: '02', title: 'Get a custom roadmap', desc: 'AI creates a structured module-by-module learning path tailored to your level.', icon: Zap },
-                            { step: '03', title: 'Learn with rich visuals', desc: 'Interactive diagrams, code examples, flashcards, and assessments guide your journey.', icon: Sparkles },
-                            { step: '04', title: 'Achieve real mastery', desc: 'Spaced repetition and adaptive testing ensure you retain everything long-term.', icon: Award },
-                        ].map((item, i) => (
-                            <RevealSection key={i} delay={i * 0.12}>
-                                <div className="relative p-6 rounded-2xl border border-[#E5E2DC] hover:border-[#C96442]/30 transition-colors group">
-                                    <span className="text-5xl font-bold text-[#E5E2DC] group-hover:text-[#C96442]/20 transition-colors" style={{ fontFamily: "'Playfair Display', serif" }}>
-                                        {item.step}
-                                    </span>
-                                    <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[#F5E6DF] mt-4 mb-3">
-                                        <item.icon className="h-5 w-5 text-[#C96442]" />
-                                    </div>
-                                    <h3 className="font-semibold text-[#1A1A1A] mb-1">{item.title}</h3>
-                                    <p className="text-sm text-[#6B6B6B] leading-relaxed">{item.desc}</p>
-                                </div>
-                            </RevealSection>
-                        ))}
-                    </div>
-                </div>
-            </section>
-
-            {/* ── Video Demo Section ── */}
-            <section className="py-24 bg-[#1A1A1A] relative overflow-hidden">
-                <div className="absolute top-0 right-1/4 w-96 h-96 rounded-full bg-[#C96442]/10 blur-3xl pointer-events-none" />
-                <div className="absolute bottom-0 left-1/4 w-96 h-96 rounded-full bg-[#E8A87C]/10 blur-3xl pointer-events-none" />
-
-                <div className="mx-auto max-w-5xl px-6 relative z-10">
-                    <RevealSection className="text-center mb-16">
-                        <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
-                            See Mentara in action
-                        </h2>
-                        <p className="text-lg text-[#9B9B9B] max-w-2xl mx-auto">
-                            Watch how our AI tutor adapts to your learning pace in real-time.
-                        </p>
-                    </RevealSection>
-
-                    <RevealSection delay={0.2}>
-                        <div className="relative w-full aspect-video bg-[#0A0A0A] rounded-2xl sm:rounded-3xl border border-white/10 shadow-[0_40px_80px_-20px_rgba(0,0,0,0.5)] overflow-hidden group cursor-pointer">
-                            {/* Static placeholder representing a video thumbnail */}
-                            <div className="absolute inset-0 bg-gradient-to-br from-[#1A1A1A] to-[#0A0A0A] flex flex-col items-center justify-center p-8">
-                                <div className="w-full h-full border border-white/5 rounded-xl bg-white/5 relative overflow-hidden backdrop-blur-sm">
-                                    <div className="absolute inset-0 bg-[url('data:image/svg+xml;base64,PHN2ZyB3aWR0aD0iMjAiIGhlaWdodD0iMjAiIHhtbG5zPSJodHRwOi8vd3d3LnczLm9yZy8yMDAwL3N2ZyI+PGNpcmNsZSBjeD0iMSIgY3k9IjEiIHI9IjEiIGZpbGw9InJnYmEoMjU1LDI1NSwyNTUsMC4wNSkiLz48L3N2Zz4=')] opacity-50" />
-                                    <div className="absolute top-4 left-4 right-4 flex gap-4 opacity-30">
-                                        <div className="w-48 h-4 rounded bg-white" />
-                                        <div className="w-16 h-4 rounded bg-white ml-auto" />
-                                    </div>
-                                    <div className="absolute bottom-4 left-4 right-4 opacity-30 flex justify-between">
-                                        <div className="w-1/3 h-24 rounded bg-white" />
-                                        <div className="w-1/2 h-48 rounded bg-white" />
-                                    </div>
-                                </div>
-                            </div>
-
-                            {/* Play button overlay */}
-                            <div className="absolute inset-0 bg-black/20 group-hover:bg-black/40 transition-colors flex items-center justify-center backdrop-blur-[2px] group-hover:backdrop-blur-sm">
-                                <div className="w-20 h-20 rounded-full bg-white/10 border border-white/20 flex items-center justify-center backdrop-blur-md transform group-hover:scale-110 transition-transform shadow-2xl">
-                                    <div className="w-16 h-16 rounded-full bg-[#C96442] flex items-center justify-center text-white pl-1">
-                                        <Play className="w-8 h-8 fill-current" />
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </RevealSection>
-                </div>
-            </section>
-
-            {/* ── Feature Deep Dive ── */}
-            <section className="py-24">
-                <div className="mx-auto max-w-6xl px-6">
-                    {[
-                        {
-                            title: 'Interactive Visual Teaching',
-                            desc: 'Mentara doesn\'t just explain — it shows. Every concept comes with auto-generated diagrams, mind maps, step-by-step animations, and comparison tables. Complex topics become intuitive through visual storytelling.',
-                            features: ['Mind maps & flowcharts', 'Step-by-step animations', 'Comparison tables', 'Infographics & stat cards'],
-                            align: 'left' as const,
-                        },
-                        {
-                            title: 'Assessments That Actually Help',
-                            desc: 'Forget passive quizzes. Mentara uses multi-question timed tests, interactive flashcard decks with spaced repetition, and real-time difficulty adaptation. Your weak spots get more attention, your strengths get celebrated.',
-                            features: ['Timed assessments', 'Spaced repetition', 'Adaptive difficulty', 'Progress analytics'],
-                            align: 'right' as const,
-                        },
-                    ].map((block, i) => (
-                        <RevealSection key={i} className={`flex flex-col ${block.align === 'right' ? 'md:flex-row-reverse' : 'md:flex-row'} gap-12 items-center mb-24 last:mb-0`}>
-                            {/* Text */}
-                            <div className="flex-1">
-                                <h3 className="text-2xl sm:text-3xl font-bold text-[#1A1A1A] mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
-                                    {block.title}
-                                </h3>
-                                <p className="text-[#6B6B6B] leading-relaxed mb-6">{block.desc}</p>
-                                <div className="grid grid-cols-2 gap-3">
-                                    {block.features.map((f, j) => (
-                                        <div key={j} className="flex items-center gap-2 text-sm">
-                                            <div className="h-5 w-5 rounded-full bg-[#E6F4EC] flex items-center justify-center flex-shrink-0">
-                                                <Check className="h-3 w-3 text-[#3B8A5A]" />
-                                            </div>
-                                            <span className="text-[#1A1A1A]">{f}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                            {/* Visual placeholder */}
-                            <div className="flex-1">
-                                <div className={`aspect-[4/3] rounded-2xl bg-gradient-to-br ${i === 0 ? 'from-[#F5E6DF] to-[#EDE9E3]' : 'from-[#E6F4EC] to-[#EDE9E3]'} border border-[#E5E2DC] flex items-center justify-center`}>
-                                    <div className="text-center p-8">
-                                        <div className="flex justify-center gap-4 mb-4">
-                                            {i === 0 ? (
-                                                <>
-                                                    <div className="w-16 h-16 rounded-xl bg-white shadow-md flex items-center justify-center">
-                                                        <Brain className="h-8 w-8 text-[#C96442]" />
-                                                    </div>
-                                                    <div className="w-12 h-12 rounded-lg bg-white shadow-md flex items-center justify-center self-end">
-                                                        <ChevronRight className="h-6 w-6 text-[#C96442]" />
-                                                    </div>
-                                                    <div className="w-16 h-16 rounded-xl bg-white shadow-md flex items-center justify-center">
-                                                        <Sparkles className="h-8 w-8 text-[#3B8A5A]" />
-                                                    </div>
-                                                </>
-                                            ) : (
-                                                <>
-                                                    <div className="flex flex-col gap-2">
-                                                        {[85, 92, 67, 100].map((v, k) => (
-                                                            <div key={k} className="flex items-center gap-2">
-                                                                <div className="w-24 h-2.5 rounded-full bg-white overflow-hidden">
-                                                                    <div className="h-full rounded-full bg-[#3B8A5A] transition-all" style={{ width: `${v}%` }} />
-                                                                </div>
-                                                                <span className="text-[10px] text-[#6B6B6B] tabular-nums w-8">{v}%</span>
-                                                            </div>
-                                                        ))}
-                                                    </div>
-                                                </>
-                                            )}
-                                        </div>
-                                        <p className="text-xs text-[#9B9B9B]">
-                                            {i === 0 ? 'AI-generated visual explanations' : 'Real-time mastery tracking'}
-                                        </p>
-                                    </div>
-                                </div>
-                            </div>
-                        </RevealSection>
-                    ))}
-                </div>
-            </section>
-
-            {/* ── CTA Section ── */}
-            <section className="py-24">
-                <div className="mx-auto max-w-6xl px-6">
-                    <RevealSection>
-                        <div className="relative overflow-hidden rounded-3xl bg-[#1A1A1A] px-8 sm:px-16 py-16 text-center">
-                            {/* Background decoration */}
-                            <div className="absolute top-0 right-0 w-72 h-72 rounded-full bg-[#C96442]/10 blur-3xl" />
-                            <div className="absolute bottom-0 left-0 w-60 h-60 rounded-full bg-[#C96442]/5 blur-3xl" />
-
-                            <div className="relative z-10 max-w-xl mx-auto">
-                                <div className="flex justify-center mb-6">
-                                    <div className="flex h-14 w-14 items-center justify-center rounded-2xl bg-white/10 backdrop-blur">
-                                        <GraduationCap className="h-7 w-7 text-[#E8A87C]" />
-                                    </div>
-                                </div>
-                                <h2 className="text-3xl sm:text-4xl font-bold text-white mb-4" style={{ fontFamily: "'Playfair Display', serif" }}>
-                                    Ready to learn differently?
-                                </h2>
-                                <p className="text-[#9B9B9B] mb-8 text-lg">
-                                    Join thousands of learners who are discovering a better way to master any subject. Get early access when we launch.
-                                </p>
-                                <WaitlistForm variant="cta" />
-                            </div>
-                        </div>
-                    </RevealSection>
-                </div>
-            </section>
-
-            {/* ── Footer ── */}
-            <footer className="border-t border-[#E5E2DC] bg-[#F5F2ED] py-12">
-                <div className="mx-auto max-w-6xl px-6">
-                    <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                        <div className="flex items-center gap-2.5">
-                            <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-[#C96442]">
-                                <GraduationCap className="h-4 w-4 text-white" />
-                            </div>
-                            <span className="text-lg font-semibold" style={{ fontFamily: "'Playfair Display', serif" }}>
-                                Mentara
-                            </span>
-                        </div>
-                        <p className="text-sm text-[#9B9B9B]">
-                            © 2026 Mentara. Building the future of personalized learning.
-                        </p>
-                        <div className="flex items-center gap-6 text-sm text-[#6B6B6B]">
-                            <a href="#" className="hover:text-[#1A1A1A] transition-colors">Privacy</a>
-                            <a href="#" className="hover:text-[#1A1A1A] transition-colors">Terms</a>
-                            <a href="mailto:hello@mentara.ai" className="hover:text-[#1A1A1A] transition-colors">Contact</a>
-                        </div>
-                    </div>
-                </div>
-            </footer>
         </div>
     );
 }

@@ -33,6 +33,7 @@ type OptionListSchemaInvariantInput = {
   value?: OptionListSelection;
   defaultValue?: OptionListSelection;
   choice?: OptionListSelection;
+  confirmed?: OptionListSelection;
 };
 
 function selectionToIds(selection: OptionListSelection | undefined): string[] {
@@ -74,11 +75,12 @@ function validateOptionListInvariants(
   }
 
   const selectionFields: Array<
-    ["value" | "defaultValue" | "choice", OptionListSelection | undefined]
+    ["value" | "defaultValue" | "choice" | "confirmed", OptionListSelection | undefined]
   > = [
     ["value", data.value],
     ["defaultValue", data.defaultValue],
     ["choice", data.choice],
+    ["confirmed", data.confirmed],
   ];
 
   for (const [fieldName, selection] of selectionFields) {
@@ -114,6 +116,8 @@ const OptionListPropsSchemaBase = z.object({
   id: ToolUIIdSchema,
   role: ToolUIRoleSchema.optional(),
   receipt: ToolUIReceiptSchema.optional(),
+  title: z.string().min(1).optional(),
+  description: z.string().min(1).optional(),
   options: z.array(OptionListOptionSchema).min(1),
   selectionMode: z.enum(["multi", "single"]).optional(),
   /**
@@ -145,7 +149,11 @@ const OptionListPropsSchemaBase = z.object({
    * ```
    */
   choice: OptionListSelectionSchema,
+  confirmed: OptionListSelectionSchema,
   actions: z
+    .union([z.array(ActionSchema), SerializableActionsConfigSchema])
+    .optional(),
+  responseActions: z
     .union([z.array(ActionSchema), SerializableActionsConfigSchema])
     .optional(),
   minSelections: z.number().min(0).optional(),
@@ -168,8 +176,11 @@ export type OptionListProps = Omit<
   defaultValue?: OptionListSelection;
   /** @see OptionListPropsSchema.choice */
   choice?: OptionListSelection;
+  /** Official Tool UI receipt field. */
+  confirmed?: OptionListSelection;
   onChange?: (value: OptionListSelection) => void;
   actions?: ActionsProp;
+  responseActions?: ActionsProp;
   onAction?: EmbeddedActionsProps<OptionListSelection>["onAction"];
   onBeforeAction?: EmbeddedActionsProps<OptionListSelection>["onBeforeAction"];
   className?: string;
@@ -182,6 +193,12 @@ export const SerializableOptionListSchema = OptionListPropsSchemaBase.omit({
   .extend({
     options: z.array(OptionListOptionSchema.omit({ icon: true })),
     actions: z
+      .union([
+        z.array(SerializableActionSchema),
+        SerializableActionsConfigSchema,
+      ])
+      .optional(),
+    responseActions: z
       .union([
         z.array(SerializableActionSchema),
         SerializableActionsConfigSchema,
