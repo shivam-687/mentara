@@ -74,7 +74,7 @@ export default function ProgressPage() {
     }
 
     return (
-        <div className="animate-fade-in mx-auto max-w-4xl">
+        <div className="animate-fade-in mx-auto w-full max-w-[92rem] px-6 py-8 xl:px-10">
             {/* Header */}
             <div className="mb-8 flex items-center gap-4">
                 <Link to={`/session/${classId}`}>
@@ -321,3 +321,6 @@ export default function ProgressPage() {
         </div>
     );
 }
+
+
+

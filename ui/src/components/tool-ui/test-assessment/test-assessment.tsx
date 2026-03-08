@@ -189,21 +189,21 @@ function Timer({
   started: boolean;
 }) {
   const [remaining, setRemaining] = useState(timeLimit);
-  const intervalRef = useRef<ReturnType<typeof setInterval>>();
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   useEffect(() => {
     if (!started) return;
     intervalRef.current = setInterval(() => {
       setRemaining((prev) => {
         if (prev <= 1) {
-          clearInterval(intervalRef.current);
+          if (intervalRef.current) clearInterval(intervalRef.current);
           onTimeUp();
           return 0;
         }
         return prev - 1;
       });
     }, 1000);
-    return () => clearInterval(intervalRef.current);
+    return () => { if (intervalRef.current) clearInterval(intervalRef.current); };
   }, [started, onTimeUp]);
 
   const minutes = Math.floor(remaining / 60);
@@ -630,3 +630,4 @@ export function TestAssessment({
     </div>
   );
 }
+

@@ -8,6 +8,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { Lock, Send, MessageSquare } from 'lucide-react';
 import { RoadmapTimeline } from '@/components/roadmap/roadmap-timeline';
+import { TutorText } from '@/components/learning/tutor-text';
 import { api } from '@/lib/api';
 import type { ClassData, ProgressData } from '@/lib/api';
 import { cn } from '@/lib/utils';
@@ -79,7 +80,7 @@ export default function RoadmapPhase({ classData, onUpdate }: RoadmapPhaseProps)
     return (
         <div className="flex h-full">
             <div className="flex-1 overflow-y-auto border-r border-[var(--color-border)] bg-[var(--color-bg-surface)]">
-                <div className="max-w-2xl mx-auto py-8 px-6">
+                <div className="mx-auto w-full max-w-[92rem] py-8 px-6 xl:px-10">
                     <motion.div
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -134,7 +135,7 @@ export default function RoadmapPhase({ classData, onUpdate }: RoadmapPhaseProps)
                 </div>
             </div>
 
-            <div className="w-[340px] flex flex-col bg-[var(--color-bg-base)]">
+            <div className="w-[380px] flex flex-col bg-[var(--color-bg-base)]">
                 <div className="flex items-center gap-2 border-b border-[var(--color-border)] px-4 py-3">
                     <MessageSquare className="h-4 w-4 text-[var(--color-text-muted)]" />
                     <span className="text-sm font-medium">Modify Roadmap</span>
@@ -151,7 +152,11 @@ export default function RoadmapPhase({ classData, onUpdate }: RoadmapPhaseProps)
                                     : 'mr-4 bg-[var(--color-bg-surface)] border border-[var(--color-border)] text-[var(--color-text-primary)]'
                             )}
                         >
-                            {msg.content}
+                            {msg.role === 'assistant' ? (
+                                <TutorText text={msg.content} />
+                            ) : (
+                                msg.content
+                            )}
                         </div>
                     ))}
                     {isSending && (
@@ -191,3 +196,4 @@ export default function RoadmapPhase({ classData, onUpdate }: RoadmapPhaseProps)
         </div>
     );
 }
+

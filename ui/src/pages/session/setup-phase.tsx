@@ -106,7 +106,11 @@ export default function SetupPhase({ classData, onUpdate }: SetupPhaseProps) {
 
     const handleSubmit = async () => {
         setIsSending(true);
-        const finalAnswers = { ...answers, interests: textInput || answers.interests || '' };
+        const finalAnswers: { experience?: string; depth?: string; interests: string } = {
+            experience: answers.experience,
+            depth: answers.depth,
+            interests: textInput || answers.interests || '',
+        };
 
         const message = [
             `Experience level: ${finalAnswers.experience || 'not specified'}.`,
@@ -242,7 +246,7 @@ export default function SetupPhase({ classData, onUpdate }: SetupPhaseProps) {
                             variant="accent"
                             size="sm"
                             onClick={goNext}
-                            disabled={isSending}
+                            disabled={isSending || !canProceed}
                             className="gap-1.5"
                         >
                             {isSending ? (
@@ -268,3 +272,5 @@ export default function SetupPhase({ classData, onUpdate }: SetupPhaseProps) {
         </div>
     );
 }
+
+

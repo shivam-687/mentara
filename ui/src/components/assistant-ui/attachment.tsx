@@ -1,6 +1,6 @@
 "use client";
 
-import { type PropsWithChildren, useEffect, useState, type FC } from "react";
+import { useEffect, useState, type FC, type PropsWithChildren } from "react";
 import { XIcon, PlusIcon, FileText } from "lucide-react";
 import {
   AttachmentPrimitive,
@@ -225,3 +225,4 @@ export const ComposerAddAttachment: FC = () => {
     </ComposerPrimitive.AddAttachment>
   );
 };
+

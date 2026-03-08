@@ -1,9 +1,5 @@
-// ── Drizzle Schema ──
-// PostgreSQL schema for Mentara AI Tutor
-
 import { pgTable, text, integer, timestamp, jsonb, uuid, varchar, boolean } from 'drizzle-orm/pg-core';
 
-// ── Users ──
 export const users = pgTable('users', {
     id: uuid('id').defaultRandom().primaryKey(),
     clerkId: varchar('clerk_id', { length: 255 }).unique().notNull(),
@@ -13,7 +9,6 @@ export const users = pgTable('users', {
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// ── Classes ──
 export const classes = pgTable('classes', {
     id: uuid('id').defaultRandom().primaryKey(),
     userId: uuid('user_id').references(() => users.id).notNull(),
@@ -27,7 +22,6 @@ export const classes = pgTable('classes', {
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
 });
 
-// ── Messages (conversation history) ──
 export const messages = pgTable('messages', {
     id: uuid('id').defaultRandom().primaryKey(),
     classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }).notNull(),
@@ -38,7 +32,6 @@ export const messages = pgTable('messages', {
     createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-// ── Progress ──
 export const progress = pgTable('progress', {
     id: uuid('id').defaultRandom().primaryKey(),
     classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }).unique().notNull(),
@@ -52,7 +45,6 @@ export const progress = pgTable('progress', {
     lastActivity: timestamp('last_activity').defaultNow().notNull(),
 });
 
-// ── Question-Answer Records (for revision & spaced repetition) ──
 export const questionAnswers = pgTable('question_answers', {
     id: uuid('id').defaultRandom().primaryKey(),
     classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }).notNull(),
@@ -74,7 +66,6 @@ export const questionAnswers = pgTable('question_answers', {
     createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-// ── Test Results ──
 export const testResults = pgTable('test_results', {
     id: uuid('id').defaultRandom().primaryKey(),
     classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }).notNull(),
@@ -88,7 +79,6 @@ export const testResults = pgTable('test_results', {
     createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-// ── Flashcard Decks ──
 export const flashcardDecks = pgTable('flashcard_decks', {
     id: uuid('id').defaultRandom().primaryKey(),
     classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }).notNull(),
@@ -97,7 +87,24 @@ export const flashcardDecks = pgTable('flashcard_decks', {
     createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-// ── Waitlist ──
+export const classNotes = pgTable('class_notes', {
+    id: uuid('id').defaultRandom().primaryKey(),
+    classId: uuid('class_id').references(() => classes.id, { onDelete: 'cascade' }).unique().notNull(),
+    mode: varchar('mode', { length: 20 }).default('auto').notNull(),
+    autoGenerate: boolean('auto_generate').default(true).notNull(),
+    status: varchar('status', { length: 20 }).default('idle').notNull(),
+    title: varchar('title', { length: 500 }),
+    summary: text('summary'),
+    markdown: text('markdown'),
+    keyTakeaways: jsonb('key_takeaways').default([]).notNull(),
+    glossary: jsonb('glossary').default([]).notNull(),
+    actionItems: jsonb('action_items').default([]).notNull(),
+    timeline: jsonb('timeline').default([]).notNull(),
+    generatedAt: timestamp('generated_at'),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+});
+
 export const waitlist = pgTable('waitlist', {
     id: uuid('id').defaultRandom().primaryKey(),
     email: varchar('email', { length: 255 }).unique().notNull(),
@@ -106,7 +113,6 @@ export const waitlist = pgTable('waitlist', {
     createdAt: timestamp('created_at').defaultNow().notNull(),
 });
 
-// Type exports for use in the app
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Class = typeof classes.$inferSelect;
@@ -121,5 +127,7 @@ export type TestResult = typeof testResults.$inferSelect;
 export type NewTestResult = typeof testResults.$inferInsert;
 export type FlashcardDeck = typeof flashcardDecks.$inferSelect;
 export type NewFlashcardDeck = typeof flashcardDecks.$inferInsert;
+export type ClassNote = typeof classNotes.$inferSelect;
+export type NewClassNote = typeof classNotes.$inferInsert;
 export type Waitlist = typeof waitlist.$inferSelect;
 export type NewWaitlist = typeof waitlist.$inferInsert;

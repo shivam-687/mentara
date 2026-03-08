@@ -1,4 +1,4 @@
-// ── Class State Tool ──
+// Class State Tool
 // Reads and writes class state via database.
 
 import type { Tool, ToolResult } from './types.js';
@@ -62,6 +62,14 @@ Use this after generating a roadmap, locking it, or advancing through modules.`,
                     return { content: '', error: 'Invalid roadmap JSON' };
                 }
             }
+
+            if (args.status === 'locked') {
+                await sessionManager.saveClass(classData);
+                await sessionManager.lockRoadmap(classId);
+                const lockedClass = await sessionManager.getClass(classId);
+                return { content: JSON.stringify(lockedClass, null, 2) };
+            }
+
             if (args.status) classData.status = args.status as typeof classData.status;
             if (args.current_module_id) classData.current_module_id = args.current_module_id as string;
             if (args.current_subtopic_index !== undefined) classData.current_subtopic_index = parseInt(args.current_subtopic_index as string, 10);

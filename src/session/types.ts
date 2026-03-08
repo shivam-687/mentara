@@ -1,5 +1,3 @@
-// ── Session & Class Data Types ──
-
 export interface Module {
     id: string;
     title: string;
@@ -92,4 +90,22 @@ export interface RevisionStats {
     total_correct: number;
     topic_breakdown: Array<{ topic: string; correct: number; total: number }>;
     recent_history: Array<{ date: string; correct: number; incorrect: number }>;
+}
+
+export interface ClassNotesData {
+    id: string;
+    class_id: string;
+    mode: 'auto' | 'manual';
+    auto_generate: boolean;
+    status: 'idle' | 'generating' | 'ready' | 'error';
+    title: string | null;
+    summary: string | null;
+    markdown: string | null;
+    key_takeaways: string[];
+    glossary: Array<{ term: string; meaning: string }>;
+    action_items: string[];
+    timeline: Array<{ title: string; detail: string }>;
+    generated_at: string | null;
+    created_at: string;
+    updated_at: string;
 }

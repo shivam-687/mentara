@@ -215,6 +215,8 @@ function OptionListConfirmation({
 
 export function OptionList({
   id,
+  title,
+  description,
   options,
   selectionMode = "multi",
   minSelections = 1,
@@ -222,8 +224,10 @@ export function OptionList({
   value,
   defaultValue,
   choice,
+  confirmed,
   onChange,
   actions,
+  responseActions,
   onAction,
   onBeforeAction,
   className,
@@ -390,8 +394,8 @@ export function OptionList({
   }, [toSelectionState, updateSelection]);
 
   const customActions = useMemo(
-    () => normalizeActionsConfig(actions),
-    [actions],
+    () => normalizeActionsConfig(responseActions ?? actions),
+    [actions, responseActions],
   );
 
   const handleFooterAction = useCallback(
@@ -541,8 +545,9 @@ export function OptionList({
     selectedCount,
   ]);
 
-  const isReceipt = choice !== undefined && choice !== null;
-  const viewKey = isReceipt ? `receipt-${String(choice)}` : "interactive";
+  const receiptSelection = confirmed ?? choice;
+  const isReceipt = receiptSelection !== undefined && receiptSelection !== null;
+  const viewKey = isReceipt ? `receipt-${String(receiptSelection)}` : "interactive";
 
   return (
     <div key={viewKey} className="contents">
@@ -551,7 +556,7 @@ export function OptionList({
           id={id}
           options={options}
           selectedIds={normalizeSelectionForOptions(
-            parseSelectionToIdSet(choice, selectionMode),
+            parseSelectionToIdSet(receiptSelection, selectionMode),
             optionIds,
           )}
           className={className}
@@ -568,6 +573,12 @@ export function OptionList({
           role="group"
           aria-label="Option list"
         >
+          {(title || description) && (
+            <div className="space-y-1 px-1">
+              {title && <p className="text-sm font-semibold text-foreground">{title}</p>}
+              {description && <p className="text-sm text-muted-foreground">{description}</p>}
+            </div>
+          )}
           <div
             className={cn(
               "group/list bg-card flex w-full flex-col overflow-hidden rounded-2xl border px-4 py-1.5 shadow-xs",

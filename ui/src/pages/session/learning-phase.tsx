@@ -4,6 +4,8 @@
 import { useState, useRef, useEffect, useCallback } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, AnimatePresence } from 'framer-motion';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import { RoadmapTimeline } from '@/components/roadmap/roadmap-timeline';
 import { ContentBlock, type ContentBlockType } from '@/components/learning/content-block';
 import { AdaptiveInput, type InputMode, type QuickAction } from '@/components/learning/adaptive-input';
@@ -20,10 +22,12 @@ import { safeParseSerializableQuestionFlow } from '@/components/tool-ui/question
 import { safeParseSerializableTestAssessment } from '@/components/tool-ui/test-assessment/schema';
 import { safeParseSerializableFlashcards } from '@/components/tool-ui/flashcards/schema';
 import { safeParseSerializableInteractive } from '@/components/tool-ui/interactive/schema';
-import { api } from '@/lib/api';
-import type { ClassData, ProgressData } from '@/lib/api';
-import { PanelLeftClose, PanelLeft, BookOpen, Map, BarChart3, Brain, ChevronRight } from 'lucide-react';
+import { api, type ToolCallData } from '@/lib/api';
+import type { ClassData, ProgressData, HistoryMessage, ClassNotesData } from '@/lib/api';
+import { isHiddenAssistantContent, isSetupOrInternalUserMessage, isUiArtifactToolName } from '@/lib/message-visibility';
+import { PanelLeftClose, PanelLeft, BookOpen, Map, BarChart3, Brain, ChevronRight, NotebookPen, Loader2, FileText, ListChecks, LibraryBig, Sparkles } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { cn } from '@/lib/utils';
 
 interface LearningPhaseProps {
@@ -36,37 +40,192 @@ interface SendOptions {
     showStudentMessage?: boolean;
 }
 
-const INTERNAL_START_LESSON = '[INTERNAL_START_LESSON]';
-const ROADMAP_INTRO = 'Here\'s your personalized learning roadmap. Would you like to add, remove, or modify any topics?';
+type OptionSelectionReceipt = string | string[] | null;
 
-function isHiddenLearningHistoryMessage(role: string, content: string): boolean {
-    const trimmed = content.trim();
+function formatTimestamp(value: string | null | undefined): string {
+    if (!value) return 'Not captured yet';
+    try {
+        return new Date(value).toLocaleString();
+    } catch {
+        return value;
+    }
+}
 
-    if (!trimmed) {
-        return role === 'assistant';
+function parseToolArgs(toolCall: ToolCallData): Record<string, unknown> {
+    try {
+        return JSON.parse(toolCall.function.arguments || '{}') as Record<string, unknown>;
+    } catch {
+        return {};
+    }
+}
+
+function extractEmbeddedInteraction(content: string): {
+    text: string;
+    interaction?: { toolName: 'show_options'; toolId: string; args: Record<string, unknown> };
+} {
+    const match = content.match(/```json\s*([\s\S]*?)\s*```/i);
+    if (!match) {
+        return { text: content };
     }
 
-    if (role === 'tool') {
-        return true;
+    try {
+        const parsed = JSON.parse(match[1]) as Record<string, unknown>;
+        const optionList = safeParseSerializableOptionList(parsed);
+        if (!optionList) {
+            return { text: content };
+        }
+
+        const textWithoutJson = content.replace(match[0], '').trim();
+        return {
+            text: textWithoutJson,
+            interaction: {
+                toolName: 'show_options',
+                toolId: String(optionList.id || `opt-${Date.now()}`),
+                args: optionList,
+            },
+        };
+    } catch {
+        return { text: content };
+    }
+}
+
+function appendAssistantContent(blocks: ContentBlockType[], content: string): ContentBlockType[] {
+    const nextBlocks = [...blocks];
+    const extracted = extractEmbeddedInteraction(content);
+
+    if (extracted.text.trim()) {
+        nextBlocks.push({ kind: 'tutor', text: extracted.text });
     }
 
-    if (trimmed === '(Only the tool call was made as requested.)') {
-        return true;
+    if (extracted.interaction) {
+        const alreadyExists = nextBlocks.some(
+            block => block.kind === 'interaction' && (block as any).toolId === extracted.interaction!.toolId,
+        );
+        if (!alreadyExists) {
+            nextBlocks.push({
+                kind: 'interaction',
+                toolName: extracted.interaction.toolName,
+                toolId: extracted.interaction.toolId,
+                args: extracted.interaction.args,
+            });
+        }
     }
 
-    if (trimmed.startsWith(INTERNAL_START_LESSON)) {
-        return true;
+    return nextBlocks;
+}
+
+function getOptionSelectionFromMessage(content: string, args: Record<string, unknown>): OptionSelectionReceipt | null {
+    const parsed = safeParseSerializableOptionList(args);
+    if (!parsed) return null;
+
+    const normalized = content
+        .split(',')
+        .map(part => part.trim())
+        .filter(Boolean);
+
+    if (normalized.length === 0) return null;
+
+    const optionIds = new Set(parsed.options.map(option => option.id));
+    if (!normalized.every(id => optionIds.has(id))) {
+        return null;
     }
 
-    if (trimmed === ROADMAP_INTRO) {
-        return true;
+    if ((parsed.selectionMode ?? 'single') === 'multi') {
+        return normalized;
     }
 
-    if (role === 'user' && /^(Experience level:|I want to learn:|Depth preference:|My experience level:)/i.test(trimmed)) {
-        return true;
+    return normalized[0] ?? null;
+}
+
+function attachOptionReceipt(
+    blocks: ContentBlockType[],
+    selection: OptionSelectionReceipt,
+    explicitToolId?: string,
+): ContentBlockType[] {
+    const nextBlocks = [...blocks];
+
+    for (let index = nextBlocks.length - 1; index >= 0; index--) {
+        const block = nextBlocks[index];
+        if (block.kind !== 'interaction' || block.toolName !== 'show_options') continue;
+        if (explicitToolId && block.toolId !== explicitToolId) continue;
+
+        const parsed = safeParseSerializableOptionList(block.args);
+        if (!parsed) continue;
+        if (parsed.confirmed !== undefined || parsed.choice !== undefined) continue;
+
+        nextBlocks[index] = {
+            ...block,
+            args: {
+                ...block.args,
+                confirmed: selection,
+                responseActions: [],
+            },
+        };
+        return nextBlocks;
     }
 
-    return false;
+    return blocks;
+}
+
+function migrateOptionListPayload(args: Record<string, unknown>): Record<string, unknown> {
+    return {
+        ...args,
+        responseActions: args.responseActions ?? args.actions,
+        confirmed: args.confirmed ?? args.choice,
+    };
+}
+
+function appendHistoryMessage(blocks: ContentBlockType[], message: HistoryMessage): ContentBlockType[] {
+    const nextBlocks = [...blocks];
+
+    if (message.role === 'user') {
+        const latestInteraction = [...nextBlocks].reverse().find(block => block.kind === 'interaction' && block.toolName === 'show_options') as Extract<ContentBlockType, { kind: 'interaction' }> | undefined;
+        if (latestInteraction) {
+            const selection = getOptionSelectionFromMessage(message.content, latestInteraction.args);
+            if (selection !== null) {
+                return attachOptionReceipt(nextBlocks, selection, latestInteraction.toolId);
+            }
+        }
+
+        if (!isSetupOrInternalUserMessage(message.content)) {
+            nextBlocks.push({ kind: 'student', text: message.content });
+        }
+        return nextBlocks;
+    }
+
+    if (message.role === 'assistant') {
+        if (!isHiddenAssistantContent(message.content) && message.content.trim()) {
+            const blocksWithText = appendAssistantContent(nextBlocks, message.content);
+            for (const toolCall of message.tool_calls || []) {
+                const toolName = toolCall.function?.name;
+                if (!isUiArtifactToolName(toolName)) continue;
+                const alreadyExists = blocksWithText.some(block => block.kind === 'interaction' && (block as any).toolId === toolCall.id);
+                if (alreadyExists) continue;
+                blocksWithText.push({
+                    kind: 'interaction',
+                    toolName,
+                    toolId: toolCall.id,
+                    args: parseToolArgs(toolCall),
+                });
+            }
+            return blocksWithText;
+        }
+
+        for (const toolCall of message.tool_calls || []) {
+            const toolName = toolCall.function?.name;
+            if (!isUiArtifactToolName(toolName)) continue;
+            const alreadyExists = nextBlocks.some(block => block.kind === 'interaction' && (block as any).toolId === toolCall.id);
+            if (alreadyExists) continue;
+            nextBlocks.push({
+                kind: 'interaction',
+                toolName,
+                toolId: toolCall.id,
+                args: parseToolArgs(toolCall),
+            });
+        }
+    }
+
+    return nextBlocks;
 }
 
 export default function LearningPhase({ classData, progress, onUpdate }: LearningPhaseProps) {
@@ -76,6 +235,9 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
     const [sidebarOpen, setSidebarOpen] = useState(true);
     const [initialLoaded, setInitialLoaded] = useState(false);
     const [contextQuickActions, setContextQuickActions] = useState<QuickAction[] | undefined>(undefined);
+    const [notes, setNotes] = useState<ClassNotesData | null>(null);
+    const [notesBusy, setNotesBusy] = useState(false);
+    const [notesDrawerOpen, setNotesDrawerOpen] = useState(false);
     const scrollRef = useRef<HTMLDivElement>(null);
     const streamingTextRef = useRef('');
     const autoStartedRef = useRef(false);
@@ -86,20 +248,10 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
         const loadHistory = async () => {
             try {
                 const { history } = await api.getHistory(classData.id);
-                const historyBlocks: ContentBlockType[] = [];
-
-                for (const msg of history) {
-                    if (isHiddenLearningHistoryMessage(msg.role, msg.content)) {
-                        continue;
-                    }
-
-                    if (msg.role === 'user') {
-                        historyBlocks.push({ kind: 'student', text: msg.content });
-                    } else if (msg.role === 'assistant') {
-                        historyBlocks.push({ kind: 'tutor', text: msg.content });
-                    }
+                let historyBlocks: ContentBlockType[] = [];
+                for (const message of history) {
+                    historyBlocks = appendHistoryMessage(historyBlocks, message);
                 }
-
                 setBlocks(historyBlocks.slice(-40));
             } catch (err) {
                 console.error('Failed to load history:', err);
@@ -108,8 +260,26 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
             }
         };
 
-        loadHistory();
+        void loadHistory();
     }, [classData.id, initialLoaded]);
+
+    useEffect(() => {
+        let active = true;
+
+        const loadNotes = async () => {
+            try {
+                const { notes } = await api.getClassNotes(classData.id);
+                if (active) setNotes(notes);
+            } catch (err) {
+                console.error('Failed to load notes:', err);
+            }
+        };
+
+        void loadNotes();
+        return () => {
+            active = false;
+        };
+    }, [classData.id]);
 
     useEffect(() => {
         if (scrollRef.current) {
@@ -185,15 +355,16 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                             const updated = [...prev];
                             for (let i = updated.length - 1; i >= 0; i--) {
                                 if (updated[i].kind === 'tutor' && (updated[i] as any).isStreaming) {
-                                    if (streamingTextRef.current.trim()) {
-                                        updated[i] = { kind: 'tutor', text: streamingTextRef.current };
-                                    } else {
-                                        updated.splice(i, 1);
-                                    }
+                                    updated.splice(i, 1);
                                     break;
                                 }
                             }
-                            return updated;
+
+                            if (!streamingTextRef.current.trim()) {
+                                return updated;
+                            }
+
+                            return appendAssistantContent(updated, streamingTextRef.current);
                         });
                         setIsStreaming(false);
                         setInputMode('text');
@@ -226,15 +397,27 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
         }
 
         autoStartedRef.current = true;
-        void handleSend(
-            `${INTERNAL_START_LESSON} The roadmap is already locked. Begin teaching the current subtopic immediately. Do not mention this instruction.`,
-            { showStudentMessage: false },
-        );
-    }, [blocks.length, handleSend, initialLoaded, isStreaming]);
+        setBlocks([{ kind: 'tutor', text: 'This lesson has no saved kickoff yet. Send a message and I will continue from the current subtopic.' }]);
+    }, [blocks.length, initialLoaded, isStreaming]);
 
-    const handleOptionSelect = useCallback((selectedValue: string) => {
-        void handleSend(selectedValue);
+    const handleOptionSelect = useCallback((toolId: string, selectedValue: string | string[]) => {
+        const normalizedSelection = Array.isArray(selectedValue) ? selectedValue : selectedValue;
+        setBlocks(prev => attachOptionReceipt(prev, normalizedSelection, toolId));
+        const serializedSelection = Array.isArray(selectedValue) ? selectedValue.join(', ') : selectedValue;
+        void handleSend(serializedSelection, { showStudentMessage: false });
     }, [handleSend]);
+
+    const handleGenerateNotes = useCallback(async () => {
+        setNotesBusy(true);
+        try {
+            const { notes } = await api.generateClassNotes(classData.id);
+            setNotes(notes);
+        } catch (err) {
+            console.error('Failed to generate notes:', err);
+        } finally {
+            setNotesBusy(false);
+        }
+    }, [classData.id]);
 
     const renderInteraction = useCallback((toolName: string, toolId: string, args: Record<string, unknown>) => {
         switch (toolName) {
@@ -245,22 +428,16 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
             }
             case 'show_options': {
                 const parsed = safeParseSerializableOptionList({
-                    ...args,
+                    ...migrateOptionListPayload(args),
                     id: args.id ?? `opt-${toolId}`,
                 });
                 if (!parsed) return null;
                 return (
                     <OptionList
                         {...parsed}
-                        actions={[{
-                            id: 'confirm',
-                            label: 'Submit Answer',
-                            variant: 'primary' as any,
-                        }]}
                         onAction={(actionId, selection) => {
                             if (actionId === 'confirm' && selection) {
-                                const selected = Array.isArray(selection) ? selection.join(', ') : selection;
-                                handleOptionSelect(selected);
+                                handleOptionSelect(toolId, selection);
                             }
                         }}
                     />
@@ -274,13 +451,7 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
             case 'show_html': {
                 const htmlContent = args.html as string;
                 if (!htmlContent) return null;
-                return (
-                    <HtmlArtifact
-                        html={htmlContent}
-                        title={args.title as string | undefined}
-                        height={args.height as string | undefined}
-                    />
-                );
+                return <HtmlArtifact html={htmlContent} title={args.title as string | undefined} height={args.height as string | undefined} />;
             }
             case 'show_test': {
                 const parsed = safeParseSerializableTestAssessment(args);
@@ -327,7 +498,6 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                 if (parsed) {
                     return <Interactive {...parsed} />;
                 }
-                console.warn('[show_interactive] Schema parse failed, attempting fallback render with raw args:', interactiveArgs);
                 if (interactiveArgs.type && (interactiveArgs.data || interactiveArgs.id)) {
                     return (
                         <Interactive
@@ -338,7 +508,6 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                         />
                     );
                 }
-                console.warn('[show_interactive] Fallback also failed - no type/data in args:', args);
                 return null;
             }
             default:
@@ -351,9 +520,25 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
     const moduleProgress = currentModule
         ? Math.round(((classData.current_subtopic_index + 1) / Math.max(currentModule.subtopics.length, 1)) * 100)
         : 0;
-    const displayProgress = currentModule && currentModule.mastery_score > 0
-        ? currentModule.mastery_score
-        : moduleProgress;
+    const displayProgress = currentModule && currentModule.mastery_score > 0 ? currentModule.mastery_score : moduleProgress;
+    const notesMode = notes?.mode ?? 'auto';
+    const notesWorking = notesBusy || notes?.status === 'generating';
+    const noteButtonTitle = notesWorking
+        ? notesMode === 'auto'
+            ? 'NoteTaker is capturing'
+            : 'Building notes'
+        : notesMode === 'auto'
+            ? 'NoteTaker Auto'
+            : 'Capture Notes';
+    const noteButtonSubtitle = notesWorking
+        ? 'Turning this lesson into a cleaner study packet.'
+        : notesMode === 'auto'
+            ? notes?.generated_at
+                ? `Last capture ${new Date(notes.generated_at).toLocaleDateString()}`
+                : 'Runs quietly while the class is unfolding.'
+            : notes?.generated_at
+                ? `Last capture ${new Date(notes.generated_at).toLocaleDateString()}`
+                : 'Manual mode. Save the current lesson when you want.';
 
     return (
         <div className="flex h-full w-full">
@@ -361,23 +546,16 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                 {sidebarOpen && classData.roadmap && (
                     <motion.aside
                         initial={{ width: 0, opacity: 0 }}
-                        animate={{ width: 260, opacity: 1 }}
+                        animate={{ width: 280, opacity: 1 }}
                         exit={{ width: 0, opacity: 0 }}
                         transition={{ duration: 0.25, ease: [0.165, 0.85, 0.45, 1] }}
-                        className="border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex-shrink-0"
+                        className="border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)] overflow-hidden flex-shrink-0 xl:w-[280px]"
                     >
-                        <div className="w-[260px] h-full overflow-y-auto">
+                        <div className="w-[280px] h-full overflow-y-auto">
                             <div className="p-3 border-b border-[var(--color-border)]">
                                 <div className="flex items-center justify-between">
-                                    <span className="text-xs font-medium uppercase tracking-widest text-[var(--color-text-muted)]">
-                                        Modules
-                                    </span>
-                                    <Button
-                                        variant="ghost"
-                                        size="icon"
-                                        className="h-6 w-6"
-                                        onClick={() => setSidebarOpen(false)}
-                                    >
+                                    <span className="text-xs font-medium uppercase tracking-widest text-[var(--color-text-muted)]">Modules</span>
+                                    <Button variant="ghost" size="icon" className="h-6 w-6" onClick={() => setSidebarOpen(false)}>
                                         <PanelLeftClose className="h-3.5 w-3.5" />
                                     </Button>
                                 </div>
@@ -407,8 +585,8 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                     </div>
                 )}
 
-                <div ref={scrollRef} className="flex-1 overflow-y-auto px-8 py-6">
-                    <div className="max-w-4xl mx-auto">
+                <div ref={scrollRef} className="flex-1 overflow-y-auto px-6 py-6 xl:px-10">
+                    <div className="mx-auto w-full max-w-[72rem]">
                         {blocks.map((block, i) => (
                             <ContentBlock key={i} block={block} renderInteraction={renderInteraction} />
                         ))}
@@ -430,16 +608,14 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                 />
             </div>
 
-            <aside className="w-[240px] border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex-shrink-0 flex flex-col overflow-y-auto">
+            <aside className="w-[280px] border-l border-[var(--color-border)] bg-[var(--color-bg-elevated)] flex-shrink-0 flex flex-col overflow-y-auto">
                 {currentModule && (
                     <div className="p-4 border-b border-[var(--color-border)]">
                         <div className="flex items-center gap-2 text-xs text-[var(--color-text-muted)] mb-2">
                             <BookOpen className="h-3.5 w-3.5" />
                             <span className="uppercase tracking-wide font-medium">Current Module</span>
                         </div>
-                        <p className="text-sm font-medium text-[var(--color-text-primary)] mb-1">
-                            {currentModule.title}
-                        </p>
+                        <p className="text-sm font-medium text-[var(--color-text-primary)] mb-1">{currentModule.title}</p>
                         {currentSubtopic && (
                             <p className="text-xs text-[var(--color-text-secondary)] flex items-center gap-1">
                                 <ChevronRight className="h-3 w-3" />
@@ -450,15 +626,10 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                         <div className="mt-3">
                             <div className="flex items-center justify-between mb-1">
                                 <span className="text-[10px] text-[var(--color-text-muted)]">Progress</span>
-                                <span className="text-[10px] font-medium text-[var(--color-text-muted)] tabular-nums">
-                                    {displayProgress}%
-                                </span>
+                                <span className="text-[10px] font-medium text-[var(--color-text-muted)] tabular-nums">{displayProgress}%</span>
                             </div>
                             <div className="h-1.5 rounded-full bg-[var(--color-border)] overflow-hidden">
-                                <div
-                                    className="h-full rounded-full bg-[var(--color-accent)] transition-all duration-700 ease-out"
-                                    style={{ width: `${displayProgress}%` }}
-                                />
+                                <div className="h-full rounded-full bg-[var(--color-accent)] transition-all duration-700 ease-out" style={{ width: `${displayProgress}%` }} />
                             </div>
                         </div>
                     </div>
@@ -471,38 +642,60 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                             <span className="font-medium text-[var(--color-accent)] tabular-nums">{progress.overall_mastery}%</span>
                         </div>
                         <div className="mt-1.5 h-1 rounded-full bg-[var(--color-border)] overflow-hidden">
-                            <div
-                                className="h-full rounded-full bg-[var(--color-success)] transition-all duration-700 ease-out"
-                                style={{ width: `${progress.overall_mastery}%` }}
-                            />
+                            <div className="h-full rounded-full bg-[var(--color-success)] transition-all duration-700 ease-out" style={{ width: `${progress.overall_mastery}%` }} />
                         </div>
                     </div>
                 )}
 
+                <div className="p-4 border-b border-[var(--color-border)]">
+                    <motion.button
+                        type="button"
+                        onClick={() => setNotesDrawerOpen(true)}
+                        animate={notesWorking ? {
+                            scale: [1, 1.012, 1],
+                            boxShadow: [
+                                '0 10px 24px rgba(211,106,58,0.14)',
+                                '0 16px 34px rgba(211,106,58,0.24)',
+                                '0 10px 24px rgba(211,106,58,0.14)',
+                            ],
+                        } : {
+                            scale: 1,
+                            boxShadow: '0 10px 24px rgba(40,28,22,0.08)',
+                        }}
+                        transition={notesWorking ? { duration: 1.6, repeat: Infinity, ease: 'easeInOut' } : { duration: 0.25 }}
+                        className="w-full rounded-[20px] border border-[var(--color-border)] bg-[linear-gradient(160deg,#FFF9F3_0%,#F6ECE2_46%,#231915_180%)] p-4 text-left transition-transform hover:-translate-y-0.5"
+                    >
+                        <div className="flex items-start justify-between gap-3">
+                            <div>
+                                <p className="text-[10px] font-medium uppercase tracking-[0.24em] text-[#8D776B]">NoteTaker</p>
+                                <p className="mt-2 text-sm font-semibold text-[#221A15]">{noteButtonTitle}</p>
+                                <p className="mt-1 text-xs leading-5 text-[#6F5E54]">{noteButtonSubtitle}</p>
+                            </div>
+                            <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white/75 text-[#D36A3A] shadow-[0_8px_20px_rgba(42,28,21,0.08)]">
+                                {notesWorking ? <Loader2 className="h-4 w-4 animate-spin" /> : <NotebookPen className="h-4 w-4" />}
+                            </div>
+                        </div>
+                        <div className="mt-4 flex items-center justify-between text-[11px]">
+                            <span className="rounded-full border border-[#E4D6CB] bg-white/75 px-2.5 py-1 font-medium uppercase tracking-[0.18em] text-[#6B574C]">
+                                {notesMode}
+                            </span>
+                            <span className="text-[#7A675D]">{notesWorking ? 'Saving…' : 'Open notes'}</span>
+                        </div>
+                    </motion.button>
+                </div>
                 <div className="p-4 space-y-1">
-                    <span className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] font-medium mb-2 block">
-                        Navigation
-                    </span>
+                    <span className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] font-medium mb-2 block">Navigation</span>
                     {classData.roadmap && (
-                        <Link
-                            to={`/roadmap/${classData.id}`}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-muted)] transition-colors"
-                        >
+                        <Link to={`/roadmap/${classData.id}`} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-muted)] transition-colors">
                             <Map className="h-3.5 w-3.5" />
                             Full Roadmap
                         </Link>
                     )}
-                    <Link
-                        to={`/progress/${classData.id}`}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-muted)] transition-colors"
-                    >
+                    <Link to={`/progress/${classData.id}`} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-muted)] transition-colors">
                         <BarChart3 className="h-3.5 w-3.5" />
                         Progress
                     </Link>
-                    <Link
-                        to={`/revision/${classData.id}`}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-muted)] transition-colors"
-                    >
+                    <Link to={`/revision/${classData.id}`} className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-muted)] transition-colors">
                         <Brain className="h-3.5 w-3.5" />
                         Revision
                     </Link>
@@ -510,9 +703,7 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
 
                 {classData.roadmap && (
                     <div className="p-4 border-t border-[var(--color-border)] mt-auto">
-                        <span className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] font-medium mb-2 block">
-                            All Modules
-                        </span>
+                        <span className="text-[10px] uppercase tracking-widest text-[var(--color-text-muted)] font-medium mb-2 block">All Modules</span>
                         <div className="space-y-1.5">
                             {classData.roadmap.modules.map((mod, i) => (
                                 <div
@@ -526,9 +717,7 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                                                 : 'text-[var(--color-text-muted)]'
                                     )}
                                 >
-                                    <span className="w-4 h-4 flex items-center justify-center rounded-full bg-[var(--color-bg-muted)] text-[10px] font-medium flex-shrink-0">
-                                        {i + 1}
-                                    </span>
+                                    <span className="w-4 h-4 flex items-center justify-center rounded-full bg-[var(--color-bg-muted)] text-[10px] font-medium flex-shrink-0">{i + 1}</span>
                                     <span className="truncate">{mod.title}</span>
                                 </div>
                             ))}
@@ -536,6 +725,157 @@ export default function LearningPhase({ classData, progress, onUpdate }: Learnin
                     </div>
                 )}
             </aside>
+
+            <Dialog open={notesDrawerOpen} onOpenChange={setNotesDrawerOpen}>
+                <DialogContent className="left-auto right-0 top-0 h-screen max-w-[44rem] translate-x-0 translate-y-0 rounded-none border-l border-[var(--color-border)] bg-[var(--color-bg-surface)] p-0 data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right sm:max-w-[44rem]">
+                    <div className="flex h-full flex-col">
+                        <DialogHeader className="border-b border-[var(--color-border)] px-6 py-5">
+                            <div className="flex items-start justify-between gap-4 pr-10">
+                                <div>
+                                    <DialogTitle className="flex items-center gap-2 text-[var(--color-text-primary)]">
+                                        <NotebookPen className="h-5 w-5 text-[var(--color-accent)]" />
+                                        Running Notes
+                                    </DialogTitle>
+                                    <DialogDescription className="mt-1">
+                                        Durable notes for this class. Refresh when you want a newer capture of the lesson so far.
+                                    </DialogDescription>
+                                </div>
+                                <div className="flex items-center gap-2">
+                                    <span className="rounded-full border border-[var(--color-border)] bg-[var(--color-bg-muted)] px-3 py-1 text-[11px] font-medium uppercase tracking-[0.18em] text-[var(--color-text-muted)]">
+                                        {notesMode}
+                                    </span>
+                                    <Button size="sm" onClick={() => { void handleGenerateNotes(); }} disabled={notesBusy} className="gap-2">
+                                        {notesBusy ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Sparkles className="h-3.5 w-3.5" />}
+                                        Refresh Notes
+                                    </Button>
+                                </div>
+                            </div>
+                        </DialogHeader>
+
+                        <div className="grid min-h-0 flex-1 gap-0 lg:grid-cols-[0.72fr_1.28fr]">
+                            <div className="border-r border-[var(--color-border)] bg-[var(--color-bg-elevated)]">
+                                <div className="h-full overflow-y-auto px-5 py-5">
+                                    <div className="space-y-4">
+                                        <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-4">
+                                            <p className="text-[11px] uppercase tracking-[0.22em] text-[var(--color-text-muted)]">Status</p>
+                                            <p className="mt-2 text-sm font-medium capitalize text-[var(--color-text-primary)]">{notes?.status || 'idle'}</p>
+                                            <p className="mt-3 text-[11px] text-[var(--color-text-secondary)]">{formatTimestamp(notes?.generated_at)}</p>
+                                        </div>
+
+                                        <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-4">
+                                            <div className="flex items-center gap-2">
+                                                <ListChecks className="h-4 w-4 text-[var(--color-accent)]" />
+                                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Key Takeaways</p>
+                                            </div>
+                                            {notes?.key_takeaways?.length ? (
+                                                <ul className="mt-3 space-y-2 text-sm text-[var(--color-text-secondary)]">
+                                                    {notes.key_takeaways.map(item => (
+                                                        <li key={item} className="rounded-[12px] bg-[var(--color-bg-muted)] px-3 py-2">
+                                                            {item}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            ) : (
+                                                <p className="mt-3 text-sm text-[var(--color-text-secondary)]">No takeaways captured yet.</p>
+                                            )}
+                                        </div>
+
+                                        <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-4">
+                                            <div className="flex items-center gap-2">
+                                                <LibraryBig className="h-4 w-4 text-[var(--color-accent)]" />
+                                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Glossary</p>
+                                            </div>
+                                            {notes?.glossary?.length ? (
+                                                <div className="mt-3 space-y-2">
+                                                    {notes.glossary.map(item => (
+                                                        <div key={item.term} className="rounded-[12px] bg-[var(--color-bg-muted)] px-3 py-2">
+                                                            <p className="text-sm font-medium text-[var(--color-text-primary)]">{item.term}</p>
+                                                            <p className="mt-1 text-xs leading-5 text-[var(--color-text-secondary)]">{item.meaning}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            ) : (
+                                                <p className="mt-3 text-sm text-[var(--color-text-secondary)]">No glossary items yet.</p>
+                                            )}
+                                        </div>
+
+                                        <div className="rounded-[18px] border border-[var(--color-border)] bg-[var(--color-bg-surface)] p-4">
+                                            <p className="text-sm font-medium text-[var(--color-text-primary)]">Action Items</p>
+                                            {notes?.action_items?.length ? (
+                                                <ul className="mt-3 space-y-2 text-sm text-[var(--color-text-secondary)]">
+                                                    {notes.action_items.map(item => (
+                                                        <li key={item} className="rounded-[12px] bg-[var(--color-bg-muted)] px-3 py-2">
+                                                            {item}
+                                                        </li>
+                                                    ))}
+                                                </ul>
+                                            ) : (
+                                                <p className="mt-3 text-sm text-[var(--color-text-secondary)]">No action items yet.</p>
+                                            )}
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div className="min-h-0 overflow-y-auto px-6 py-5">
+                                {notes?.markdown ? (
+                                    <div className="space-y-5">
+                                        <div className="rounded-[20px] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+                                            <div className="flex items-center gap-2">
+                                                <FileText className="h-4 w-4 text-[var(--color-accent)]" />
+                                                <p className="text-sm font-medium text-[var(--color-text-primary)]">{notes.title || 'Study Packet'}</p>
+                                            </div>
+                                            {notes.summary ? (
+                                                <p className="mt-3 text-sm leading-6 text-[var(--color-text-secondary)]">{notes.summary}</p>
+                                            ) : null}
+                                        </div>
+
+                                        <div className="prose prose-sm max-w-none text-[var(--color-text-primary)] prose-headings:font-[var(--font-heading)] prose-p:text-[var(--color-text-secondary)] prose-strong:text-[var(--color-text-primary)] prose-li:text-[var(--color-text-secondary)] prose-code:text-[var(--color-accent)]">
+                                            <ReactMarkdown remarkPlugins={[remarkGfm]}>
+                                                {notes.markdown}
+                                            </ReactMarkdown>
+                                        </div>
+
+                                        {notes.timeline?.length ? (
+                                            <div className="rounded-[20px] border border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-4">
+                                                <p className="text-sm font-medium text-[var(--color-text-primary)]">Capture Timeline</p>
+                                                <div className="mt-3 space-y-3">
+                                                    {notes.timeline.map((item, index) => (
+                                                        <div key={`${item.title}-${index}`} className="rounded-[14px] bg-[var(--color-bg-surface)] px-3 py-3">
+                                                            <p className="text-sm font-medium text-[var(--color-text-primary)]">{item.title}</p>
+                                                            <p className="mt-1 text-sm leading-6 text-[var(--color-text-secondary)]">{item.detail}</p>
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ) : null}
+                                    </div>
+                                ) : (
+                                    <div className="flex h-full min-h-[24rem] flex-col items-center justify-center rounded-[24px] border border-dashed border-[var(--color-border)] bg-[var(--color-bg-elevated)] p-8 text-center">
+                                        <NotebookPen className="h-10 w-10 text-[var(--color-accent)]" />
+                                        <p className="mt-4 text-lg font-medium text-[var(--color-text-primary)]">No running notes yet</p>
+                                        <p className="mt-2 max-w-md text-sm leading-6 text-[var(--color-text-secondary)]">
+                                            Capture the current lesson to build a reusable study packet with summary, takeaways, glossary, and next actions.
+                                        </p>
+                                        <Button className="mt-5 gap-2" onClick={() => { void handleGenerateNotes(); }} disabled={notesBusy}>
+                                            {notesBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+                                            Capture Notes Now
+                                        </Button>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    </div>
+                </DialogContent>
+            </Dialog>
         </div>
     );
 }
+
+
+
+
+
+
+
+

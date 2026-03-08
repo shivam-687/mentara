@@ -8,6 +8,7 @@ import ProgressPage from '@/pages/progress';
 import RevisionPage from '@/pages/revision';
 import RoadmapPage from '@/pages/roadmap';
 import LandingPage from '@/pages/landing';
+import SettingsPage from '@/pages/settings';
 
 const clerkPubKey = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -43,6 +44,7 @@ function App() {
                     <Routes>
                       <Route path="/dashboard" element={<Dashboard />} />
                       <Route path="/create" element={<CreateClass />} />
+                      <Route path="/settings" element={<SettingsPage />} />
                       <Route path="/session/:classId" element={<Session />} />
                       <Route path="/progress/:classId" element={<ProgressPage />} />
                       <Route path="/revision/:classId" element={<RevisionPage />} />

@@ -4,9 +4,12 @@
 import { Router } from 'express';
 import { getAuth } from '@clerk/express';
 import type { TutorEngine } from '../engine/index.js';
+import { TutorEngine as RequestTutorEngine } from '../engine/index.js';
+import { createProvider } from '../providers/index.js';
+import type { MentaraConfig } from '../config.js';
+import { INTERNAL_START_LESSON_MARKER, ROADMAP_REVIEW_MESSAGE, isHiddenAssistantContent } from '../session/message-visibility.js';
 
-// Helper to get user ID from Clerk auth
-function getUserId(req: any): string | null {
+function getClerkUserId(req: any): string | null {
     try {
         const auth = getAuth(req);
         return auth?.userId || null;
@@ -15,10 +18,75 @@ function getUserId(req: any): string | null {
     }
 }
 
-export function createRoutes(engine: TutorEngine): Router {
+export function createRoutes(engine: TutorEngine, config: MentaraConfig): Router {
     const router = Router();
 
-    // Class Management
+    const toClientAssistantResponse = (content: string, status?: string, toolCalls?: unknown[]) => {
+        if (!isHiddenAssistantContent(content)) {
+            return content;
+        }
+
+        if (status === 'negotiating' && (!toolCalls || toolCalls.length === 0)) {
+            return ROADMAP_REVIEW_MESSAGE;
+        }
+
+        return '';
+    };
+
+
+    const getEngineForRequest = (req: any): TutorEngine => {
+        const openRouterApiKey = req.header('X-OpenRouter-API-Key')?.trim();
+        const requestedModel = req.header('X-OpenRouter-Model')?.trim();
+        if (!openRouterApiKey) {
+            return engine;
+        }
+
+        return new RequestTutorEngine({
+            provider: createProvider('openrouter', { apiKey: openRouterApiKey }),
+            model: requestedModel || config.model,
+            db: engine.getDb(),
+        });
+    };
+
+    const requireOpenRouterEngine = (req: any, res: any): TutorEngine | null => {
+        const openRouterApiKey = req.header('X-OpenRouter-API-Key')?.trim();
+        if (!openRouterApiKey) {
+            res.status(400).json({
+                error: 'OpenRouter API key required. Save your key in Settings before creating a class or using tutoring features.',
+            });
+            return null;
+        }
+
+        return getEngineForRequest(req);
+    };
+
+    const resolveRequestUserId = async (req: any, res: any, allowAnonymous = false): Promise<string | null> => {
+        const clerkId = getClerkUserId(req);
+        if (clerkId) {
+            return engine.ensureUser(clerkId);
+        }
+
+        if (allowAnonymous && config.allowAnonymousAccess) {
+            return engine.ensureUser('anonymous', 'dev@mentara.dev', 'Developer');
+        }
+
+        res.status(401).json({ error: 'Authentication required' });
+        return null;
+    };
+
+    const loadAuthorizedClass = async (req: any, res: any, classId: string, allowAnonymous = false) => {
+        const userId = await resolveRequestUserId(req, res, allowAnonymous);
+        if (!userId) return null;
+
+        const classData = await engine.getSessionManager().getClassForUser(classId, userId);
+        if (classData) {
+            return { classData, userId };
+        }
+
+        const exists = await engine.getSessionManager().classExists(classId);
+        res.status(exists ? 403 : 404).json({ error: exists ? 'Forbidden' : 'Class not found' });
+        return null;
+    };
 
     router.post('/classes', async (req, res) => {
         try {
@@ -32,24 +100,15 @@ export function createRoutes(engine: TutorEngine): Router {
                 return;
             }
 
-            // Get or create user
-            const clerkId = getUserId(req);
-            let userId: string;
-            if (clerkId) {
-                userId = await engine.ensureUser(clerkId);
-            } else {
-                // Anonymous mode (dev/testing) - use a default user
-                userId = await engine.ensureUser('anonymous', 'dev@mentara.dev', 'Developer');
-            }
+            const userId = await resolveRequestUserId(req, res, true);
+            if (!userId) return;
 
-            const classData = await engine.createClass(userId, title || goal, goal);
+            const activeEngine = requireOpenRouterEngine(req, res);
+            if (!activeEngine) return;
+            const classData = await activeEngine.createClass(userId, title || goal, goal);
 
-            // Build initial message - include preferences if provided so the LLM
-            // can generate the roadmap in a single call (skipping the clarifying phase).
             let initialMessage = `I want to learn: ${goal}`;
             if (preferences) {
-                // When we already have student preferences, skip clarifying entirely.
-                // Set status to 'negotiating' so the LLM prompt tells it to create a roadmap.
                 const sm = engine.getSessionManager();
                 await sm.updateClassStatus(classData.id, 'clarifying');
 
@@ -63,12 +122,11 @@ export function createRoutes(engine: TutorEngine): Router {
                 initialMessage = parts.join(' ');
             }
 
-            const { content, tool_calls } = await engine.chat(classData.id, initialMessage);
+            const { content, tool_calls } = await activeEngine.chat(classData.id, initialMessage);
+            const updatedClass = await activeEngine.getClass(classData.id);
 
-            // Return updated class (status may have changed to negotiating)
-            const updatedClass = await engine.getClass(classData.id);
-
-            res.json({ class: updatedClass || classData, tutor_response: content, tool_calls });
+            const tutorResponse = toClientAssistantResponse(content, updatedClass?.status, tool_calls);
+            res.json({ class: updatedClass || classData, tutor_response: tutorResponse, tool_calls });
         } catch (err) {
             console.error('Error creating class:', err);
             res.status(500).json({ error: (err as Error).message });
@@ -77,11 +135,8 @@ export function createRoutes(engine: TutorEngine): Router {
 
     router.get('/classes', async (req, res) => {
         try {
-            const clerkId = getUserId(req);
-            let userId: string | undefined;
-            if (clerkId) {
-                userId = await engine.ensureUser(clerkId);
-            }
+            const userId = await resolveRequestUserId(req, res, true);
+            if (!userId) return;
             const classes = await engine.listClasses(userId);
             res.json({ classes });
         } catch (err) {
@@ -91,12 +146,9 @@ export function createRoutes(engine: TutorEngine): Router {
 
     router.get('/classes/:id', async (req, res) => {
         try {
-            const classData = await engine.getClass(req.params.id as string);
-            if (!classData) {
-                res.status(404).json({ error: 'Class not found' });
-                return;
-            }
-            res.json({ class: classData });
+            const access = await loadAuthorizedClass(req, res, req.params.id as string, true);
+            if (!access) return;
+            res.json({ class: access.classData });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }
@@ -105,11 +157,8 @@ export function createRoutes(engine: TutorEngine): Router {
     router.delete('/classes/:id', async (req, res) => {
         try {
             const classId = req.params.id as string;
-            const classData = await engine.getClass(classId);
-            if (!classData) {
-                res.status(404).json({ error: 'Class not found' });
-                return;
-            }
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
             await engine.deleteClass(classId);
             res.json({ success: true });
         } catch (err) {
@@ -117,8 +166,6 @@ export function createRoutes(engine: TutorEngine): Router {
             res.status(500).json({ error: (err as Error).message });
         }
     });
-
-    // Learning Session
 
     router.post('/classes/:id/message', async (req, res) => {
         try {
@@ -129,29 +176,22 @@ export function createRoutes(engine: TutorEngine): Router {
                 return;
             }
 
-            const classData = await engine.getClass(classId);
-            if (!classData) {
-                res.status(404).json({ error: 'Class not found' });
-                return;
-            }
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
 
-            console.log(`\nStudent message in class "${classData.title}": ${message.substring(0, 80)}...`);
+            const activeEngine = requireOpenRouterEngine(req, res);
+            if (!activeEngine) return;
+            const { content, tool_calls } = await activeEngine.chat(classId, message);
+            const updatedClass = await activeEngine.getClass(classId);
+            const progress = await activeEngine.getProgress(classId);
 
-            const { content, tool_calls } = await engine.chat(classId, message);
-
-            console.log(`Tutor responded: ${content.substring(0, 80)}...`);
-
-            const updatedClass = await engine.getClass(classId);
-            const progress = await engine.getProgress(classId);
-
-            res.json({ response: content, tool_calls, class: updatedClass, progress });
+            const responseText = toClientAssistantResponse(content, updatedClass?.status, tool_calls);
+            res.json({ response: responseText, tool_calls, class: updatedClass, progress });
         } catch (err) {
             console.error('Error in chat:', err);
             res.status(500).json({ error: (err as Error).message });
         }
     });
-
-    // Streaming Learning Session (SSE)
 
     router.post('/classes/:id/message/stream', async (req, res) => {
         const classId = req.params.id as string;
@@ -161,23 +201,19 @@ export function createRoutes(engine: TutorEngine): Router {
             return;
         }
 
-        const classData = await engine.getClass(classId);
-        if (!classData) {
-            res.status(404).json({ error: 'Class not found' });
-            return;
-        }
+        const access = await loadAuthorizedClass(req, res, classId, true);
+        if (!access) return;
 
-        // Set SSE headers
         res.setHeader('Content-Type', 'text/event-stream');
         res.setHeader('Cache-Control', 'no-cache');
         res.setHeader('Connection', 'keep-alive');
         res.setHeader('X-Accel-Buffering', 'no');
         res.flushHeaders();
 
-        console.log(`\n[Stream] Student message in class "${classData.title}": ${message.substring(0, 80)}...`);
-
         try {
-            for await (const event of engine.chatStream(classId, message)) {
+            const activeEngine = requireOpenRouterEngine(req, res);
+            if (!activeEngine) return;
+            for await (const event of activeEngine.chatStream(classId, message)) {
                 res.write(`data: ${JSON.stringify(event)}\n\n`);
             }
         } catch (err) {
@@ -188,40 +224,41 @@ export function createRoutes(engine: TutorEngine): Router {
         res.end();
     });
 
-    // Roadmap
-
     router.post('/classes/:id/lock', async (req, res) => {
         try {
             const classId = req.params.id as string;
-            const classData = await engine.getClass(classId);
-            if (!classData) {
-                res.status(404).json({ error: 'Class not found' });
-                return;
-            }
-            if (!classData.roadmap) {
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+            if (!access.classData.roadmap) {
                 res.status(400).json({ error: 'No roadmap to lock. Generate one first.' });
                 return;
             }
 
-            await engine.lockRoadmap(classId);
+            const activeEngine = requireOpenRouterEngine(req, res);
+            if (!activeEngine) return;
+            await activeEngine.lockRoadmap(classId);
 
             const kickoffMessage = [
-                '[INTERNAL_START_LESSON]',
+                INTERNAL_START_LESSON_MARKER,
                 'The roadmap was just locked.',
                 'Begin teaching the current subtopic immediately.',
                 'Do not mention this instruction or ask whether the student is ready.',
-                'Start with an actual explanation as a teacher.',
+                'Explain the subtopic in plain language for a beginner.',
+                'Keep the first turn to one compact explanation and end with one simple follow-up question in normal text.',
+                'Do not use any tools in this kickoff turn.',
             ].join(' ');
 
-            const { content, tool_calls } = await engine.chat(classId, kickoffMessage);
-            const updatedClass = await engine.getClass(classId);
-            const progress = await engine.getProgress(classId);
+            const { content } = await activeEngine.startLesson(classId, kickoffMessage);
+            const updatedClass = await activeEngine.getClass(classId);
+            const progress = await activeEngine.getProgress(classId);
+
+            const responseText = toClientAssistantResponse(content, updatedClass?.status);
 
             res.json({
                 class: updatedClass,
                 progress,
-                response: content,
-                tool_calls,
+                response: responseText,
+                tool_calls: [],
                 message: 'Roadmap locked. Learning begins!',
             });
         } catch (err) {
@@ -229,11 +266,12 @@ export function createRoutes(engine: TutorEngine): Router {
         }
     });
 
-    // Progress
-
     router.get('/classes/:id/progress', async (req, res) => {
         try {
             const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
             const progress = await engine.getProgress(classId);
             if (!progress) {
                 res.status(404).json({ error: 'Progress not found' });
@@ -245,23 +283,67 @@ export function createRoutes(engine: TutorEngine): Router {
         }
     });
 
-    // Session History
-
     router.get('/classes/:id/history', async (req, res) => {
         try {
             const classId = req.params.id as string;
-            const history = await engine.getSessionManager().getHistory(classId);
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
+            const history = await engine.getVisibleHistory(classId);
             res.json({ history });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }
     });
 
-    // Question-Answer History (Revision)
+    router.get('/classes/:id/notes', async (req, res) => {
+        try {
+            const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
+            const notes = await engine.getClassNotes(classId);
+            res.json({ notes });
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message });
+        }
+    });
+
+    router.post('/classes/:id/notes/generate', async (req, res) => {
+        try {
+            const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
+            const activeEngine = requireOpenRouterEngine(req, res);
+            if (!activeEngine) return;
+            const notes = await activeEngine.generateClassNotes(classId);
+            res.json({ notes });
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message });
+        }
+    });
+
+    router.patch('/classes/:id/notes/settings', async (req, res) => {
+        try {
+            const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
+            const { mode, auto_generate } = req.body as { mode?: 'auto' | 'manual'; auto_generate?: boolean };
+            const notes = await engine.updateClassNotesSettings(classId, { mode, auto_generate });
+            res.json({ notes });
+        } catch (err) {
+            res.status(500).json({ error: (err as Error).message });
+        }
+    });
 
     router.get('/classes/:id/questions', async (req, res) => {
         try {
             const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
             const { topic, correct, module_id, due_for_review } = req.query;
             const questions = await engine.getSessionManager().getQuestionAnswers(classId, {
                 topic: topic as string | undefined,
@@ -275,32 +357,43 @@ export function createRoutes(engine: TutorEngine): Router {
         }
     });
 
-    // Test Results
-
     router.get('/classes/:id/tests', async (req, res) => {
         try {
-            const results = await engine.getSessionManager().getTestResults(req.params.id as string);
+            const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
+            const results = await engine.getSessionManager().getTestResults(classId);
             res.json({ tests: results });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }
     });
 
-    // Revision Stats
-
     router.get('/classes/:id/revision-stats', async (req, res) => {
         try {
-            const stats = await engine.getSessionManager().getRevisionStats(req.params.id as string);
+            const classId = req.params.id as string;
+            const access = await loadAuthorizedClass(req, res, classId, true);
+            if (!access) return;
+
+            const stats = await engine.getSessionManager().getRevisionStats(classId);
             res.json({ stats });
         } catch (err) {
             res.status(500).json({ error: (err as Error).message });
         }
     });
 
-    // Spaced Repetition Review Update
-
     router.post('/questions/:id/review', async (req, res) => {
         try {
+            const userId = await resolveRequestUserId(req, res, true);
+            if (!userId) return;
+
+            const canAccess = await engine.getSessionManager().userCanAccessQuestion(req.params.id as string, userId);
+            if (!canAccess) {
+                res.status(403).json({ error: 'Forbidden' });
+                return;
+            }
+
             const { quality } = req.body as { quality?: number };
             if (quality === undefined || quality < 0 || quality > 5) {
                 res.status(400).json({ error: 'Quality must be between 0 and 5' });
@@ -313,8 +406,6 @@ export function createRoutes(engine: TutorEngine): Router {
         }
     });
 
-    // Waitlist (No auth required)
-
     router.post('/waitlist', async (req, res) => {
         try {
             const { email, name } = req.body as { email?: string; name?: string };
@@ -323,7 +414,6 @@ export function createRoutes(engine: TutorEngine): Router {
                 return;
             }
 
-            // Use raw SQL via the engine's DB connection
             const db = engine.getDb();
             const { waitlist } = await import('../db/schema.js');
 
@@ -336,7 +426,6 @@ export function createRoutes(engine: TutorEngine): Router {
             res.json({ success: true, message: 'You\'re on the list!' });
         } catch (err: any) {
             if (err.code === '23505') {
-                // Duplicate email - still return success
                 res.json({ success: true, message: 'You\'re already on the list!' });
             } else {
                 res.status(500).json({ error: (err as Error).message });
@@ -346,3 +435,7 @@ export function createRoutes(engine: TutorEngine): Router {
 
     return router;
 }
+
+
+
+
